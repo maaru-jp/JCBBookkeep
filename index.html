@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>刷卡紀錄 · 對帳</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header__brand">
+        <span class="header__logo" aria-hidden="true">💳</span>
+        <div>
+          <h1 class="header__title" id="headerTitle">刷卡紀錄</h1>
+          <p class="header__subtitle" id="headerSubtitle">刷日幣 · 帳單對台幣</p>
+        </div>
+      </div>
+      <div class="header__actions">
+        <button type="button" class="btn btn--ghost" id="btnLinkSpreadsheet" title="連結本機 Excel 試算表">連結試算表</button>
+        <button type="button" class="btn btn--ghost" id="btnExport" title="匯出 Excel（一家銀行一個分頁）">匯出試算表</button>
+        <button type="button" class="btn btn--primary" id="btnAdd">＋ 新增紀錄</button>
+      </div>
+    </header>
+
+    <div class="spreadsheet-bar" id="spreadsheetBar" aria-live="polite">
+      <span class="spreadsheet-bar__icon" aria-hidden="true">📊</span>
+      <span class="spreadsheet-bar__text" id="spreadsheetStatus">尚未連結試算表。連結 Excel 後，一個檔案內每家銀行各一個分頁。</span>
+      <div class="spreadsheet-bar__actions">
+        <button type="button" class="btn btn--ghost btn--sm" id="btnSyncSpreadsheet" hidden>立即同步</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnUnlinkSpreadsheet" hidden>解除連結</button>
+      </div>
+    </div>
+
+    <nav class="bank-switcher" id="bankSwitcher" role="tablist" aria-label="選擇發卡銀行"></nav>
+
+    <section class="reconcile" aria-label="對帳工具">
+      <div class="reconcile__top">
+        <div>
+          <h2 class="reconcile__title">快速對帳</h2>
+          <p class="reconcile__desc" id="reconcileDesc">帳單明細只顯示<strong>台幣</strong>。請將帳單上的金額輸入下方，即可找出當初刷日幣的購物紀錄。</p>
+        </div>
+        <span class="reconcile__pending" id="statPending">待對帳 0 筆</span>
+      </div>
+      <div class="reconcile__lookup">
+        <label class="bill-lookup">
+          <span class="bill-lookup__label">帳單台幣金額</span>
+          <span class="bill-lookup__input-wrap">
+            <span class="bill-lookup__prefix">NT$</span>
+            <input type="number" id="billTwdLookup" class="bill-lookup__input" placeholder="輸入明細上的台幣金額" min="0" step="1" inputmode="numeric" />
+          </span>
+        </label>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnClearBillLookup">清除金額</button>
+      </div>
+      <p class="reconcile__result" id="matchHint" aria-live="polite"></p>
+      <div class="reconcile__controls">
+        <div class="tab-group" role="tablist" aria-label="對帳狀態">
+          <button type="button" class="tab tab--active" data-status="all" role="tab" aria-selected="true">全部</button>
+          <button type="button" class="tab" data-status="pending" role="tab">待對帳</button>
+          <button type="button" class="tab" data-status="done" role="tab">已對帳</button>
+        </div>
+        <div class="tab-group" role="tablist" aria-label="排序">
+          <button type="button" class="tab tab--active" data-sort="date" role="tab">依日期</button>
+          <button type="button" class="tab" data-sort="twd" role="tab">依台幣金額</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats stats--dual" aria-label="統計摘要">
+      <article class="stat-card stat-card--pending">
+        <span class="stat-card__label">待對帳</span>
+        <strong class="stat-card__value" id="statPendingCount">0</strong>
+      </article>
+      <article class="stat-card stat-card--jpy">
+        <span class="stat-card__label">本期帳單日幣</span>
+        <strong class="stat-card__value" id="statMonthJpy">¥ 0</strong>
+      </article>
+      <article class="stat-card stat-card--accent">
+        <span class="stat-card__label">本期帳單台幣</span>
+        <strong class="stat-card__value" id="statMonthTwd">NT$ 0</strong>
+      </article>
+      <article class="stat-card stat-card--all">
+        <span class="stat-card__label">全部累計</span>
+        <strong class="stat-card__value stat-card__value--sm" id="statAllJpy">¥ 0</strong>
+        <strong class="stat-card__value" id="statAllTwd">NT$ 0</strong>
+      </article>
+    </section>
+
+    <section class="monthly-bills" id="monthlyBillsSection" aria-label="每月帳單">
+      <div class="monthly-bills__head">
+        <div>
+          <h2 class="monthly-bills__title">每月帳單</h2>
+          <p class="monthly-bills__desc" id="monthlyBillsDesc">明細依<strong>帳單月份</strong>歸戶，可自由新增或移至其他月份；繳清卡費後標記「已繳卡費」。</p>
+        </div>
+        <div class="view-mode tab-group" role="tablist" aria-label="檢視模式">
+          <button type="button" class="tab tab--active" data-view="bills" role="tab" aria-selected="true">月份帳單</button>
+          <button type="button" class="tab" data-view="list" role="tab">明細列表</button>
+        </div>
+      </div>
+      <div class="monthly-bills__list" id="monthlyBillsList"></div>
+      <p class="monthly-bills__empty" id="monthlyBillsEmpty" hidden>尚無帳單資料，請先新增刷卡紀錄。</p>
+    </section>
+
+    <section class="toolbar" id="toolbarSection">
+      <div class="search">
+        <svg class="search__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="search" id="searchInput" class="search__input" placeholder="搜尋包裹單號、商品名稱、台幣金額…" autocomplete="off" />
+      </div>
+      <div class="filters">
+        <label class="filter-label">
+          <span>起日</span>
+          <input type="date" id="filterFrom" class="filter-date" />
+        </label>
+        <label class="filter-label">
+          <span>迄日</span>
+          <input type="date" id="filterTo" class="filter-date" />
+        </label>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnClearFilter">清除篩選</button>
+      </div>
+    </section>
+
+    <main class="records" id="recordsList" role="list" aria-label="刷卡紀錄列表">
+      <div class="empty" id="emptyState">
+        <div class="empty__icon" aria-hidden="true">📋</div>
+        <p class="empty__title">尚無紀錄</p>
+        <p class="empty__hint">點擊「新增紀錄」開始記錄您的刷卡歷程</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- 新增 / 編輯 對話框 -->
+  <dialog class="modal" id="recordModal">
+    <form class="modal__form" id="recordForm" method="dialog">
+      <header class="modal__header">
+        <h2 class="modal__title" id="modalTitle">新增刷卡紀錄</h2>
+        <button type="button" class="modal__close" id="btnCloseModal" aria-label="關閉">×</button>
+      </header>
+      <div class="modal__body">
+        <input type="hidden" id="recordId" />
+        <label class="field field--bank">
+          <span class="field__label">發卡銀行 <em class="required">*</em></span>
+          <select id="bankId" class="field__input" required></select>
+          <span class="field__hint">切換上方分頁可檢視各銀行帳單；新增時預設為目前選取的銀行</span>
+        </label>
+        <label class="field">
+          <span class="field__label">包裹單號 <em class="required">*</em></span>
+          <input type="text" id="packageNo" class="field__input" placeholder="例：TW123456789" required maxlength="64" />
+        </label>
+        <fieldset class="products-field">
+          <div class="products-field__head">
+            <legend class="products-field__legend">商品明細 <em class="required">*</em></legend>
+            <button type="button" class="btn btn--ghost btn--sm" id="btnAddProduct">＋ 新增商品</button>
+          </div>
+          <p class="field__hint">每項請填：名稱、數量、該項日幣金額</p>
+          <div class="product-row-labels" aria-hidden="true">
+            <span>商品名稱</span><span>數量</span><span>日幣金額</span><span></span>
+          </div>
+          <div class="products-list" id="productsList"></div>
+          <fieldset class="deductions-field">
+            <legend class="deductions-field__legend">折抵（選填，自動從日幣合計扣除）</legend>
+            <div class="field-row field-row--deductions">
+              <label class="field field--deduction">
+                <span class="field__label">亞馬遜積分抵扣 ¥</span>
+                <input type="number" id="amazonPointsJpy" class="field__input" placeholder="0" min="0" step="1" value="0" />
+              </label>
+              <label class="field field--deduction">
+                <span class="field__label">平台優惠券抵扣 ¥</span>
+                <input type="number" id="couponJpy" class="field__input" placeholder="0" min="0" step="1" value="0" />
+              </label>
+            </div>
+          </fieldset>
+          <div class="jpy-summary" id="productsJpyTotal" aria-live="polite"></div>
+        </fieldset>
+        <fieldset class="amount-group">
+          <legend class="amount-group__legend">帳單台幣（選填）</legend>
+          <label class="field field--currency">
+            <span class="field__label"><span class="currency-badge currency-badge--twd">NT$</span> 台幣金額（帳單明細）</span>
+            <input type="number" id="amountTwd" class="field__input" placeholder="收到帳單後填入，可先留空" min="0" step="1" />
+          </label>
+          <p class="amount-group__hint">日幣＝商品加總 − 積分 − 優惠券；台幣等帳單出來再填。</p>
+        </fieldset>
+        <div class="field-row">
+          <label class="field">
+            <span class="field__label">刷卡日期 <em class="required">*</em></span>
+            <input type="date" id="payDate" class="field__input" required />
+          </label>
+          <label class="field">
+            <span class="field__label">歸屬帳單月份 <em class="required">*</em></span>
+            <div class="field__row-inline">
+              <input type="month" id="billMonth" class="field__input" required />
+              <button type="button" class="btn btn--ghost btn--sm" id="btnApplyBillMonth">依刷卡日帶入</button>
+            </div>
+            <span class="field__hint" id="billMonthHint">可自由選擇；新增時預設依該銀行結帳日推算</span>
+          </label>
+        </div>
+        <label class="field">
+          <span class="field__label">備註（選填）</span>
+          <textarea id="note" class="field__input field__textarea" rows="2" placeholder="例：分期、退貨中、對帳已核" maxlength="300"></textarea>
+        </label>
+      </div>
+      <footer class="modal__footer">
+        <button type="button" class="btn btn--ghost" id="btnCancel">取消</button>
+        <button type="submit" class="btn btn--primary">儲存</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- 刪除確認 -->
+  <dialog class="modal modal--sm" id="deleteModal">
+    <div class="modal__form">
+      <header class="modal__header">
+        <h2 class="modal__title">確認刪除？</h2>
+      </header>
+      <p class="modal__text" id="deletePreview">此筆紀錄將無法復原。</p>
+      <footer class="modal__footer">
+        <button type="button" class="btn btn--ghost" id="btnCancelDelete">取消</button>
+        <button type="button" class="btn btn--danger" id="btnConfirmDelete">刪除</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
