@@ -6,32 +6,43 @@
   <title>刷卡紀錄 · 對帳</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
   <div class="app">
     <header class="header">
       <div class="header__brand">
-        <span class="header__logo" aria-hidden="true">💳</span>
+        <span class="header__logo" aria-hidden="true"><span class="header__logo-mark">帳</span></span>
         <div>
           <h1 class="header__title" id="headerTitle">刷卡紀錄</h1>
           <p class="header__subtitle" id="headerSubtitle">刷日幣 · 帳單對台幣</p>
         </div>
       </div>
       <div class="header__actions">
-        <button type="button" class="btn btn--ghost" id="btnLinkSpreadsheet" title="連結本機 CSV 試算表">連結試算表</button>
-        <button type="button" class="btn btn--ghost" id="btnExport" title="匯出 CSV">匯出 CSV</button>
         <button type="button" class="btn btn--primary" id="btnAdd">＋ 新增紀錄</button>
       </div>
     </header>
 
-    <div class="spreadsheet-bar" id="spreadsheetBar" aria-live="polite">
-      <span class="spreadsheet-bar__icon" aria-hidden="true">📊</span>
-      <span class="spreadsheet-bar__text" id="spreadsheetStatus">尚未連結試算表。連結後，新增／編輯／刪除會自動寫入 CSV。</span>
+    <div class="origin-warning" id="originWarning" hidden>
+      <strong>請改用本機伺服器開啟此頁</strong>
+      <span id="originWarningText">直接雙擊 index.html（file://）時，瀏覽器可能無法穩定連線 Google 試算表。</span>
+      <code id="originWarningCmd">python -m http.server 8080</code>
+      <span>→ 瀏覽器開啟 <strong>http://localhost:8080</strong></span>
+    </div>
+
+    <div class="spreadsheet-bar" id="googleBar" aria-live="polite">
+      <span class="spreadsheet-bar__icon" aria-hidden="true">☁️</span>
+      <span class="spreadsheet-bar__label">Google 試算表</span>
+      <div class="spreadsheet-bar__google-setup">
+        <input type="url" id="gasUrlInput" class="spreadsheet-bar__url" placeholder="貼上 Apps Script 部署 URL（結尾 /exec）" autocomplete="off" spellcheck="false" />
+        <span class="spreadsheet-bar__text" id="googleStatus">請先連結 Google 試算表；新增或修改紀錄後會自動寫入（每家銀行一個分頁）。</span>
+      </div>
       <div class="spreadsheet-bar__actions">
-        <button type="button" class="btn btn--ghost btn--sm" id="btnSyncSpreadsheet" hidden>立即同步</button>
-        <button type="button" class="btn btn--ghost btn--sm" id="btnUnlinkSpreadsheet" hidden>解除連結</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnConnectGoogle">連結 Google</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnPullGoogle" hidden>從雲端載入</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnSyncGoogle" hidden>立即上傳</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnDisconnectGoogle" hidden>解除</button>
       </div>
     </div>
 
@@ -124,7 +135,7 @@
 
     <main class="records" id="recordsList" role="list" aria-label="刷卡紀錄列表">
       <div class="empty" id="emptyState">
-        <div class="empty__icon" aria-hidden="true">📋</div>
+        <div class="empty__icon" aria-hidden="true">🌸</div>
         <p class="empty__title">尚無紀錄</p>
         <p class="empty__hint">點擊「新增紀錄」開始記錄您的刷卡歷程</p>
       </div>
