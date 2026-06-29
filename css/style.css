@@ -1074,6 +1074,44 @@ body::before {
   font-weight: 600;
 }
 
+.shipping-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.shipping-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+  padding: 0.35rem 0;
+}
+
+.shipping-toggle input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--indigo);
+  cursor: pointer;
+}
+
+.field--shipping {
+  flex: 1;
+  min-width: 8rem;
+  max-width: 12rem;
+  margin: 0;
+}
+
 .deductions-field {
   margin: 0.75rem 0 0;
   padding: 0.75rem 0 0;
@@ -1121,6 +1159,15 @@ body::before {
 
 .jpy-summary__row--minus span:last-child {
   color: var(--jpy);
+}
+
+.jpy-summary__row--plus {
+  color: var(--indigo);
+}
+
+.jpy-summary__row--plus span:last-child {
+  color: var(--indigo);
+  font-weight: 600;
 }
 
 .jpy-summary__row--total {
