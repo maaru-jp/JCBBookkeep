@@ -648,7 +648,9 @@ async function pullFromGoogle() {
     const data = await gasPost({ action: "all" });
     applyGoogleData(data);
     googleLastSync = formatSyncTime();
-    expandedMonths = new Set([currentBillMonth(currentBankId)]);
+    for (const bank of BANKS) {
+      getBankState(bank.id).expandedMonths = new Set([currentBillMonth(bank.id)]);
+    }
     render();
     updateGoogleSyncUI();
   } catch (err) {
@@ -805,41 +807,6 @@ function twdMatchesBill(recordTwd, billTwd) {
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
-function updateBankUI() {
-  const bank = BANK_BY_ID[currentBankId];
-  document.title = `${bank.name} 刷卡紀錄 · 對帳`;
-  const headerTitle = $("#headerTitle");
-  const headerSubtitle = $("#headerSubtitle");
-  const reconcileDesc = $("#reconcileDesc");
-  if (headerTitle) headerTitle.textContent = `${bank.name} 刷卡紀錄`;
-  if (headerSubtitle) headerSubtitle.textContent = bank.subtitle;
-  if (reconcileDesc) {
-    reconcileDesc.innerHTML = `${bank.name} 帳單明細只顯示<strong>台幣</strong>。請將帳單上的金額輸入下方，即可找出當初刷日幣的購物紀錄。`;
-  }
-  const monthlyBillsDesc = $("#monthlyBillsDesc");
-  if (monthlyBillsDesc) {
-    const cycleNote = usesClosingDayRule(currentBankId)
-      ? `（${formatClosingDaySummary(currentBankId)}）`
-      : "";
-    monthlyBillsDesc.innerHTML = `明細依<strong>帳單月份</strong>歸戶${cycleNote}，可自由新增或移至其他月份；繳清卡費後標記「已繳卡費」。`;
-  }
-  const nav = $("#bankSwitcher");
-  if (nav) {
-    nav.querySelectorAll("[data-bank]").forEach((btn) => {
-      const bankCfg = BANK_BY_ID[btn.dataset.bank];
-      if (!bankCfg) return;
-      const cycle = usesClosingDayRule(bankCfg.id) ? ` · ${bankCfg.closingDay}日結帳` : "";
-      btn.title = `${bankCfg.name}${cycle}`;
-    });
-  }
-  updateBillMonthFormHints();
-  $$("[data-bank]").forEach((btn) => {
-    const active = btn.dataset.bank === currentBankId;
-    btn.classList.toggle("bank-tab--active", active);
-    btn.setAttribute("aria-selected", active ? "true" : "false");
-  });
-}
-
 function updateBillMonthFormHints(bankId = bankIdInput?.value || currentBankId) {
   const hint = $("#billMonthHint");
   const btn = $("#btnApplyBillMonth");
@@ -855,24 +822,271 @@ function updateBillMonthFormHints(bankId = bankIdInput?.value || currentBankId) 
   }
 }
 
-function initBankSwitcher() {
-  const nav = $("#bankSwitcher");
-  if (!nav) return;
-  nav.innerHTML = BANKS.map(
-    (b) =>
-      `<button type="button" class="bank-tab" data-bank="${b.id}" role="tab" aria-selected="false">${escapeHtml(b.name)}</button>`
+/** @typedef {{ viewMode: string, statusFilter: string, sortMode: string, expandedMonths: Set<string> }} BankPanelState */
+
+/** @type {Record<string, BankPanelState>} */
+const bankPanelState = {};
+
+function createBankPanelState(bankId) {
+  return {
+    viewMode: "bills",
+    statusFilter: "all",
+    sortMode: "date",
+    expandedMonths: new Set([currentBillMonth(bankId)]),
+  };
+}
+
+/** @param {string} bankId */
+function getBankState(bankId) {
+  if (!bankPanelState[bankId]) bankPanelState[bankId] = createBankPanelState(bankId);
+  return bankPanelState[bankId];
+}
+
+/** @param {BankConfig} bank */
+function bankPanelTemplate(bank) {
+  const cycle = usesClosingDayRule(bank.id)
+    ? `<span class="bank-panel__cycle">${formatClosingDaySummary(bank.id)}</span>`
+    : "";
+  const cycleDesc = usesClosingDayRule(bank.id)
+    ? `（${formatClosingDaySummary(bank.id)}）`
+    : "";
+
+  return `
+    <section class="bank-panel" id="bank-panel-${bank.id}" data-bank="${bank.id}" aria-labelledby="bank-panel-title-${bank.id}">
+      <header class="bank-panel__head">
+        <div class="bank-panel__head-main">
+          <h2 class="bank-panel__title" id="bank-panel-title-${bank.id}">${escapeHtml(bank.name)}</h2>
+          ${cycle}
+          <p class="bank-panel__desc">${escapeHtml(bank.subtitle)} · 明細依<strong>帳單月份</strong>歸戶${cycleDesc}</p>
+        </div>
+        <div class="bank-panel__head-actions">
+          <span class="bank-panel__pending" data-pending-badge>待對帳 0 筆</span>
+          <button type="button" class="btn btn--ghost btn--sm" data-action="add-record" data-bank="${bank.id}">＋ 新增</button>
+        </div>
+      </header>
+
+      <div class="stats stats--dual bank-panel__stats" aria-label="${escapeHtml(bank.name)}統計">
+        <article class="stat-card stat-card--pending">
+          <span class="stat-card__label">待對帳</span>
+          <strong class="stat-card__value" data-stat-pending>0</strong>
+        </article>
+        <article class="stat-card stat-card--jpy">
+          <span class="stat-card__label">本期帳單日幣</span>
+          <strong class="stat-card__value" data-stat-month-jpy>¥ 0</strong>
+        </article>
+        <article class="stat-card stat-card--accent">
+          <span class="stat-card__label">本期帳單台幣</span>
+          <strong class="stat-card__value" data-stat-month-twd>NT$ 0</strong>
+        </article>
+        <article class="stat-card stat-card--all">
+          <span class="stat-card__label">全部累計</span>
+          <strong class="stat-card__value stat-card__value--sm" data-stat-all-jpy>¥ 0</strong>
+          <strong class="stat-card__value" data-stat-all-twd>NT$ 0</strong>
+        </article>
+      </div>
+
+      <section class="reconcile bank-panel__reconcile" aria-label="${escapeHtml(bank.name)}快速對帳">
+        <div class="reconcile__top">
+          <div>
+            <h3 class="reconcile__title">快速對帳</h3>
+            <p class="reconcile__desc">帳單明細只顯示<strong>台幣</strong>。輸入帳單金額即可找出刷日幣的購物紀錄。</p>
+          </div>
+        </div>
+        <div class="reconcile__lookup">
+          <label class="bill-lookup">
+            <span class="bill-lookup__label">帳單台幣金額</span>
+            <span class="bill-lookup__input-wrap">
+              <span class="bill-lookup__prefix">NT$</span>
+              <input type="number" class="bill-lookup__input" data-bill-lookup inputmode="numeric" min="0" step="1" placeholder="輸入明細上的台幣金額" />
+            </span>
+          </label>
+          <button type="button" class="btn btn--ghost btn--sm" data-action="clear-bill-lookup">清除金額</button>
+        </div>
+        <p class="reconcile__result" data-match-hint aria-live="polite"></p>
+        <div class="reconcile__controls">
+          <div class="tab-group" role="tablist" aria-label="對帳狀態">
+            <button type="button" class="tab tab--active" data-status="all" data-bank="${bank.id}" role="tab" aria-selected="true">全部</button>
+            <button type="button" class="tab" data-status="pending" data-bank="${bank.id}" role="tab">待對帳</button>
+            <button type="button" class="tab" data-status="done" data-bank="${bank.id}" role="tab">已對帳</button>
+          </div>
+          <div class="tab-group" role="tablist" aria-label="排序">
+            <button type="button" class="tab tab--active" data-sort="date" data-bank="${bank.id}" role="tab">依日期</button>
+            <button type="button" class="tab" data-sort="twd" data-bank="${bank.id}" role="tab">依台幣金額</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="monthly-bills bank-panel__bills" aria-label="${escapeHtml(bank.name)}每月帳單">
+        <div class="monthly-bills__head">
+          <h3 class="monthly-bills__title">每月帳單</h3>
+          <div class="view-mode tab-group" role="tablist" aria-label="檢視模式">
+            <button type="button" class="tab tab--active" data-view="bills" data-bank="${bank.id}" role="tab" aria-selected="true">月份帳單</button>
+            <button type="button" class="tab" data-view="list" data-bank="${bank.id}" role="tab">明細列表</button>
+          </div>
+        </div>
+        <div class="monthly-bills__list" data-bills-list></div>
+        <p class="monthly-bills__empty" data-bills-empty hidden>尚無帳單資料，請先新增刷卡紀錄。</p>
+      </section>
+
+      <section class="toolbar bank-panel__toolbar" data-toolbar hidden>
+        <div class="search">
+          <svg class="search__icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="search" class="search__input" data-search placeholder="搜尋包裹單號、商品名稱、台幣金額…" autocomplete="off" />
+        </div>
+        <div class="filters">
+          <label class="filter-label">
+            <span>起日</span>
+            <input type="date" class="filter-date" data-filter-from />
+          </label>
+          <label class="filter-label">
+            <span>迄日</span>
+            <input type="date" class="filter-date" data-filter-to />
+          </label>
+          <button type="button" class="btn btn--ghost btn--sm" data-action="clear-filters">清除篩選</button>
+        </div>
+      </section>
+
+      <main class="records bank-panel__records" data-records-list role="list" aria-label="${escapeHtml(bank.name)}刷卡紀錄" hidden>
+        <div class="empty" data-empty-state>
+          <div class="empty__icon" aria-hidden="true">🌸</div>
+          <p class="empty__title">尚無紀錄</p>
+          <p class="empty__hint">點擊「新增」開始記錄此銀行的刷卡歷程</p>
+        </div>
+      </main>
+    </section>
+  `;
+}
+
+function initBankPanels() {
+  const overview = $("#bankOverview");
+  const panels = $("#bankPanels");
+  if (!overview || !panels) return;
+
+  overview.innerHTML = BANKS.map(
+    (b) => `
+      <a class="bank-overview-card" href="#bank-panel-${b.id}" data-bank="${b.id}">
+        <span class="bank-overview-card__name">${escapeHtml(b.name)}</span>
+        <span class="bank-overview-card__meta" data-overview-meta>0 筆 · 待對帳 0</span>
+        <span class="bank-overview-card__amounts" data-overview-amounts>本期 NT$ 0</span>
+      </a>
+    `
   ).join("");
-  nav.querySelectorAll("[data-bank]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const nextBank = btn.dataset.bank;
-      if (!nextBank || nextBank === currentBankId) return;
-      currentBankId = nextBank;
-      localStorage.setItem(CURRENT_BANK_KEY, currentBankId);
-      expandedMonths = new Set([currentBillMonth()]);
-      updateBankUI();
-      render();
+
+  panels.innerHTML = BANKS.map((b) => bankPanelTemplate(b)).join("");
+
+  overview.querySelectorAll("[data-bank]").forEach((link) => {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      scrollToBank(link.dataset.bank);
     });
   });
+
+  panels.querySelectorAll('[data-action="add-record"]').forEach((btn) => {
+    btn.addEventListener("click", () => openAdd(btn.dataset.bank));
+  });
+
+  panels.addEventListener("click", (e) => {
+    const target = /** @type {HTMLElement} */ (e.target);
+    const bankId = target.closest("[data-bank]")?.dataset.bank;
+    if (!bankId) return;
+
+    const statusBtn = target.closest("[data-status][data-bank]");
+    if (statusBtn) {
+      getBankState(bankId).statusFilter = statusBtn.dataset.status || "all";
+      setActiveTabInPanel(bankId, "[data-status]", statusBtn);
+      render();
+      return;
+    }
+
+    const sortBtn = target.closest("[data-sort][data-bank]");
+    if (sortBtn) {
+      getBankState(bankId).sortMode = sortBtn.dataset.sort || "date";
+      setActiveTabInPanel(bankId, "[data-sort]", sortBtn);
+      render();
+      return;
+    }
+
+    const viewBtn = target.closest("[data-view][data-bank]");
+    if (viewBtn) {
+      getBankState(bankId).viewMode = viewBtn.dataset.view || "bills";
+      setActiveTabInPanel(bankId, "[data-view]", viewBtn);
+      render();
+      return;
+    }
+
+    if (target.closest('[data-action="clear-bill-lookup"]')) {
+      const panel = getBankPanel(bankId);
+      const input = panel?.querySelector("[data-bill-lookup]");
+      if (input instanceof HTMLInputElement) {
+        input.value = "";
+        input.focus();
+      }
+      render();
+      return;
+    }
+
+    if (target.closest('[data-action="clear-filters"]')) {
+      clearPanelFilters(bankId);
+      render();
+    }
+  });
+
+  panels.addEventListener("input", (e) => {
+    const target = /** @type {HTMLElement} */ (e.target);
+    if (
+      target.matches("[data-bill-lookup]") ||
+      target.matches("[data-search]") ||
+      target.matches("[data-filter-from]") ||
+      target.matches("[data-filter-to]")
+    ) {
+      render();
+    }
+  });
+
+  panels.addEventListener("change", (e) => {
+    const target = /** @type {HTMLElement} */ (e.target);
+    if (target.matches("[data-filter-from]") || target.matches("[data-filter-to]")) {
+      render();
+    }
+  });
+}
+
+/** @param {string} bankId */
+function getBankPanel(bankId) {
+  return $(`#bank-panel-${bankId}`);
+}
+
+/** @param {string} bankId */
+function scrollToBank(bankId) {
+  if (!BANK_BY_ID[bankId]) return;
+  currentBankId = bankId;
+  localStorage.setItem(CURRENT_BANK_KEY, currentBankId);
+  getBankPanel(bankId)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+/** @param {string} bankId @param {string} groupSelector @param {Element} activeBtn */
+function setActiveTabInPanel(bankId, groupSelector, activeBtn) {
+  const panel = getBankPanel(bankId);
+  if (!panel) return;
+  panel.querySelectorAll(groupSelector).forEach((btn) => {
+    const isActive = btn === activeBtn;
+    btn.classList.toggle("tab--active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+}
+
+/** @param {string} bankId */
+function clearPanelFilters(bankId) {
+  const panel = getBankPanel(bankId);
+  if (!panel) return;
+  const search = panel.querySelector("[data-search]");
+  const from = panel.querySelector("[data-filter-from]");
+  const to = panel.querySelector("[data-filter-to]");
+  const bill = panel.querySelector("[data-bill-lookup]");
+  if (search instanceof HTMLInputElement) search.value = "";
+  if (from instanceof HTMLInputElement) from.value = "";
+  if (to instanceof HTMLInputElement) to.value = "";
+  if (bill instanceof HTMLInputElement) bill.value = "";
 }
 
 function initBankSelect() {
@@ -883,33 +1097,13 @@ function initBankSelect() {
   ).join("");
 }
 
-function switchBank(bankId) {
-  if (!BANK_BY_ID[bankId] || bankId === currentBankId) return;
+function scrollToBankAfterSave(bankId) {
   currentBankId = bankId;
   localStorage.setItem(CURRENT_BANK_KEY, currentBankId);
-  expandedMonths = new Set([currentBillMonth()]);
-  updateBankUI();
-  render();
+  requestAnimationFrame(() => scrollToBank(bankId));
 }
 
-const recordsList = $("#recordsList");
-const emptyState = $("#emptyState");
-const monthlyBillsList = $("#monthlyBillsList");
-const monthlyBillsEmpty = $("#monthlyBillsEmpty");
-const monthlyBillsSection = $("#monthlyBillsSection");
-const toolbarSection = $("#toolbarSection");
-const searchInput = $("#searchInput");
-const filterFrom = $("#filterFrom");
-const filterTo = $("#filterTo");
-const billTwdLookup = $("#billTwdLookup");
-const matchHint = $("#matchHint");
-const statPending = $("#statPending");
-const statPendingCount = $("#statPendingCount");
-const statMonthJpy = $("#statMonthJpy");
-const statMonthTwd = $("#statMonthTwd");
-const statAllJpy = $("#statAllJpy");
-const statAllTwd = $("#statAllTwd");
-
+const bankPanels = $("#bankPanels");
 const recordModal = $("#recordModal");
 const recordForm = $("#recordForm");
 const modalTitle = $("#modalTitle");
@@ -933,30 +1127,34 @@ let records = loadRecords();
 let settlements = loadSettlements();
 let currentBankId = loadCurrentBank();
 let pendingDeleteId = null;
-let statusFilter = "all";
-let sortMode = "date";
-let viewMode = "bills";
-let expandedMonths = new Set([currentBillMonth()]);
 
-function getBillTwd() {
-  const v = billTwdLookup.value.trim();
+/** @param {string} bankId */
+function getBillTwdForBank(bankId) {
+  const panel = getBankPanel(bankId);
+  const input = panel?.querySelector("[data-bill-lookup]");
+  if (!(input instanceof HTMLInputElement)) return null;
+  const v = input.value.trim();
   if (!v) return null;
   const n = Math.round(Number(v));
   return Number.isNaN(n) || n < 0 ? null : n;
 }
 
-function getFiltered() {
-  const q = searchInput.value.trim().toLowerCase();
-  const from = filterFrom.value;
-  const to = filterTo.value;
-  const billTwd = getBillTwd();
+/** @param {string} bankId */
+function getFilteredForBank(bankId) {
+  const panel = getBankPanel(bankId);
+  const state = getBankState(bankId);
+  const searchEl = panel?.querySelector("[data-search]");
+  const fromEl = panel?.querySelector("[data-filter-from]");
+  const toEl = panel?.querySelector("[data-filter-to]");
+  const q = searchEl instanceof HTMLInputElement ? searchEl.value.trim().toLowerCase() : "";
+  const from = fromEl instanceof HTMLInputElement ? fromEl.value : "";
+  const to = toEl instanceof HTMLInputElement ? toEl.value : "";
+  const billTwd = getBillTwdForBank(bankId);
 
-  let list = recordsForBank(currentBankId).filter((r) => {
-    if (statusFilter === "pending" && r.reconciled) return false;
-    if (statusFilter === "done" && !r.reconciled) return false;
-
+  let list = recordsForBank(bankId).filter((r) => {
+    if (state.statusFilter === "pending" && r.reconciled) return false;
+    if (state.statusFilter === "done" && !r.reconciled) return false;
     if (billTwd !== null && !twdMatchesBill(r.amountTwd, billTwd)) return false;
-
     if (q) {
       const hay = `${r.packageNo} ${formatProductsSearch(r.products)} ${r.note} ${r.amountTwd} ${r.amountJpy} ${r.billMonth}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -967,7 +1165,7 @@ function getFiltered() {
   });
 
   return [...list].sort((a, b) => {
-    if (sortMode === "twd") {
+    if (state.sortMode === "twd") {
       const diff = (b.amountTwd || 0) - (a.amountTwd || 0);
       if (diff !== 0) return diff;
     }
@@ -993,7 +1191,12 @@ function getSettlement(month, bankId = currentBankId) {
   return settlements[settlementKey(bankId, month)] ?? { paid: false, paidDate: "" };
 }
 
-function updateMatchHint(filtered, billTwd) {
+/** @param {string} bankId @param {Record[]} filtered @param {number | null} billTwd */
+function updateMatchHintForBank(bankId, filtered, billTwd) {
+  const panel = getBankPanel(bankId);
+  const matchHint = panel?.querySelector("[data-match-hint]");
+  if (!matchHint) return;
+
   if (billTwd === null) {
     matchHint.textContent = "";
     matchHint.className = "reconcile__result";
@@ -1001,7 +1204,7 @@ function updateMatchHint(filtered, billTwd) {
   }
 
   if (filtered.length === 0) {
-    matchHint.textContent = `找不到台幣 NT$ ${billTwd.toLocaleString("zh-TW")} 的紀錄。請確認是否已填入台幣，或改搜尋「待對帳」項目。`;
+    matchHint.textContent = `找不到台幣 NT$ ${billTwd.toLocaleString("zh-TW")} 的紀錄。請確認是否已填入台幣，或改篩選「待對帳」項目。`;
     matchHint.className = "reconcile__result reconcile__result--warn";
     return;
   }
@@ -1017,9 +1220,13 @@ function updateMatchHint(filtered, billTwd) {
   matchHint.className = "reconcile__result reconcile__result--multi";
 }
 
-function updateStats() {
-  const billMonth = currentBillMonth(currentBankId);
-  const bankRecords = recordsForBank(currentBankId);
+/** @param {string} bankId */
+function updateStatsForBank(bankId) {
+  const panel = getBankPanel(bankId);
+  if (!panel) return;
+
+  const billMonth = currentBillMonth(bankId);
+  const bankRecords = recordsForBank(bankId);
   const pending = bankRecords.filter((r) => !r.reconciled);
   const monthRecords = bankRecords.filter((r) => r.billMonth === billMonth);
   const monthJpy = monthRecords.reduce((s, r) => s + r.amountJpy, 0);
@@ -1027,12 +1234,28 @@ function updateStats() {
   const allJpy = bankRecords.reduce((s, r) => s + r.amountJpy, 0);
   const allTwd = bankRecords.reduce((s, r) => s + r.amountTwd, 0);
 
-  statPending.textContent = `待對帳 ${pending.length} 筆`;
-  statPendingCount.textContent = String(pending.length);
-  statMonthJpy.textContent = formatJpy(monthJpy);
-  statMonthTwd.textContent = formatTwd(monthTwd);
-  statAllJpy.textContent = formatJpy(allJpy);
-  statAllTwd.textContent = formatTwd(allTwd);
+  const pendingBadge = panel.querySelector("[data-pending-badge]");
+  if (pendingBadge) pendingBadge.textContent = `待對帳 ${pending.length} 筆`;
+
+  const statPending = panel.querySelector("[data-stat-pending]");
+  const statMonthJpy = panel.querySelector("[data-stat-month-jpy]");
+  const statMonthTwd = panel.querySelector("[data-stat-month-twd]");
+  const statAllJpy = panel.querySelector("[data-stat-all-jpy]");
+  const statAllTwd = panel.querySelector("[data-stat-all-twd]");
+
+  if (statPending) statPending.textContent = String(pending.length);
+  if (statMonthJpy) statMonthJpy.textContent = formatJpy(monthJpy);
+  if (statMonthTwd) statMonthTwd.textContent = formatTwd(monthTwd);
+  if (statAllJpy) statAllJpy.textContent = formatJpy(allJpy);
+  if (statAllTwd) statAllTwd.textContent = formatTwd(allTwd);
+
+  const overviewCard = $(`.bank-overview-card[data-bank="${bankId}"]`);
+  if (overviewCard) {
+    const meta = overviewCard.querySelector("[data-overview-meta]");
+    const amounts = overviewCard.querySelector("[data-overview-amounts]");
+    if (meta) meta.textContent = `${bankRecords.length} 筆 · 待對帳 ${pending.length}`;
+    if (amounts) amounts.textContent = `本期 ${formatTwd(monthTwd)} · ${formatJpy(monthJpy)}`;
+  }
 }
 
 function toggleReconciled(id) {
@@ -1043,13 +1266,14 @@ function toggleReconciled(id) {
   render();
 }
 
-function toggleBillPaid(month) {
-  const key = settlementKey(currentBankId, month);
-  const cur = getSettlement(month);
+/** @param {string} month @param {string} bankId */
+function toggleBillPaid(month, bankId) {
+  const key = settlementKey(bankId, month);
+  const cur = getSettlement(month, bankId);
   if (cur.paid) {
     settlements[key] = { paid: false, paidDate: "" };
   } else {
-    const items = recordsForBank(currentBankId).filter((r) => r.billMonth === month);
+    const items = recordsForBank(bankId).filter((r) => r.billMonth === month);
     const unreconciled = items.filter((r) => !r.reconciled).length;
     if (unreconciled > 0) {
       const ok = confirm(
@@ -1071,17 +1295,17 @@ function syncBillMonthFromPayDate(force = false) {
   }
 }
 
-/** @returns {string[]} */
-function getBillMonthOptions() {
-  const bankId = bankIdInput?.value || currentBankId;
-  const set = new Set(recordsForBank(currentBankId).map((r) => r.billMonth).filter(Boolean));
-  set.add(currentBillMonth(currentBankId));
-  if (payDate.value) set.add(inferBillMonth(payDate.value, bankId));
+/** @param {string} bankId @returns {string[]} */
+function getBillMonthOptions(bankId) {
+  const set = new Set(recordsForBank(bankId).map((r) => r.billMonth).filter(Boolean));
+  set.add(currentBillMonth(bankId));
+  const formBankId = bankIdInput?.value || bankId;
+  if (payDate.value && formBankId === bankId) set.add(inferBillMonth(payDate.value, bankId));
   return [...set].sort((a, b) => b.localeCompare(a));
 }
 
-function buildMonthSelectOptions(currentMonth) {
-  const months = getBillMonthOptions();
+function buildMonthSelectOptions(currentMonth, bankId) {
+  const months = getBillMonthOptions(bankId);
   if (currentMonth && !months.includes(currentMonth)) months.unshift(currentMonth);
   const opts = months
     .map((m) => `<option value="${m}"${m === currentMonth ? " selected" : ""}>${formatBillMonthLabel(m)}</option>`)
@@ -1102,12 +1326,12 @@ function moveRecordToMonth(id, newMonth) {
   if (idx < 0) return;
   records[idx].billMonth = newMonth;
   saveRecords(records);
-  expandedMonths.add(newMonth);
+  getBankState(records[idx].bankId).expandedMonths.add(newMonth);
   render();
 }
 
-function openAddToMonth(month) {
-  openAdd();
+function openAddToMonth(month, bankId) {
+  openAdd(bankId);
   billMonthInput.value = month;
 }
 
@@ -1149,7 +1373,7 @@ function renderRecordCard(r, billTwd) {
       <label class="move-month">
         <span class="move-month__label">移至帳單月份</span>
         <select class="move-month__select" data-action="move-month" title="可自由移動至其他月份帳單">
-          ${buildMonthSelectOptions(r.billMonth)}
+          ${buildMonthSelectOptions(r.billMonth, r.bankId)}
         </select>
       </label>
       ${monthHintHtml}
@@ -1180,7 +1404,15 @@ function renderRecordCard(r, billTwd) {
   return card;
 }
 
-function renderMonthlyBills(filtered, billTwd) {
+/** @param {string} bankId @param {Record[]} filtered @param {number | null} billTwd */
+function renderMonthlyBillsForBank(bankId, filtered, billTwd) {
+  const panel = getBankPanel(bankId);
+  if (!panel) return;
+  const monthlyBillsList = panel.querySelector("[data-bills-list]");
+  const monthlyBillsEmpty = panel.querySelector("[data-bills-empty]");
+  if (!monthlyBillsList || !monthlyBillsEmpty) return;
+
+  const state = getBankState(bankId);
   monthlyBillsList.innerHTML = "";
   const groups = groupByBillMonth(filtered);
   const months = [...groups.keys()].sort((a, b) => {
@@ -1193,7 +1425,7 @@ function renderMonthlyBills(filtered, billTwd) {
 
   for (const month of months) {
     const items = groups.get(month);
-    const settlement = getSettlement(month);
+    const settlement = getSettlement(month, bankId);
     const totalTwd = items.reduce((s, r) => s + (r.amountTwd || 0), 0);
     const totalJpy = items.reduce((s, r) => s + r.amountJpy, 0);
     const reconciledCount = items.filter((r) => r.reconciled).length;
@@ -1201,7 +1433,8 @@ function renderMonthlyBills(filtered, billTwd) {
 
     const details = document.createElement("details");
     details.className = "bill-month" + (settlement.paid ? " bill-month--paid" : "");
-    details.open = expandedMonths.has(month) || (!settlement.paid && month === currentBillMonth(currentBankId));
+    details.open =
+      state.expandedMonths.has(month) || (!settlement.paid && month === currentBillMonth(bankId));
 
     const paidBadge = settlement.paid
       ? `<span class="bill-month__badge bill-month__badge--paid">已繳卡費</span>`
@@ -1211,10 +1444,8 @@ function renderMonthlyBills(filtered, billTwd) {
       ? `<span class="bill-month__paid-date">繳費日 ${formatDisplayDate(settlement.paidDate)}</span>`
       : "";
 
-    const cycleHtml = formatBillingCycleRange(month, currentBankId);
-    const cycleBlock = cycleHtml
-      ? `<p class="bill-month__cycle">${cycleHtml}</p>`
-      : "";
+    const cycleHtml = formatBillingCycleRange(month, bankId);
+    const cycleBlock = cycleHtml ? `<p class="bill-month__cycle">${cycleHtml}</p>` : "";
 
     details.innerHTML = `
       <summary class="bill-month__summary">
@@ -1250,8 +1481,8 @@ function renderMonthlyBills(filtered, billTwd) {
     `;
 
     details.addEventListener("toggle", () => {
-      if (details.open) expandedMonths.add(month);
-      else expandedMonths.delete(month);
+      if (details.open) state.expandedMonths.add(month);
+      else state.expandedMonths.delete(month);
     });
 
     const itemsEl = details.querySelector(".bill-month__items");
@@ -1259,14 +1490,14 @@ function renderMonthlyBills(filtered, billTwd) {
 
     details.querySelector("[data-pay-month]").addEventListener("click", (e) => {
       e.preventDefault();
-      toggleBillPaid(month);
+      toggleBillPaid(month, bankId);
     });
 
     const addBtn = details.querySelector("[data-add-month]");
     if (addBtn) {
       addBtn.addEventListener("click", (e) => {
         e.preventDefault();
-        openAddToMonth(month);
+        openAddToMonth(month, bankId);
       });
     }
 
@@ -1274,28 +1505,13 @@ function renderMonthlyBills(filtered, billTwd) {
   }
 }
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
-
-function render() {
-  const billTwd = getBillTwd();
-  const filtered = getFiltered();
-
-  updateMatchHint(filtered, billTwd);
-  updateStats();
-
-  const isBillsView = viewMode === "bills";
-  monthlyBillsSection.hidden = !isBillsView;
-  toolbarSection.hidden = isBillsView;
-  recordsList.hidden = isBillsView;
-
-  if (isBillsView) {
-    renderMonthlyBills(filtered, billTwd);
-    return;
-  }
+/** @param {string} bankId @param {Record[]} filtered @param {number | null} billTwd */
+function renderRecordsListForBank(bankId, filtered, billTwd) {
+  const panel = getBankPanel(bankId);
+  if (!panel) return;
+  const recordsList = panel.querySelector("[data-records-list]");
+  const emptyState = panel.querySelector("[data-empty-state]");
+  if (!recordsList || !emptyState) return;
 
   recordsList.querySelectorAll(".record-card").forEach((el) => el.remove());
   const showEmpty = filtered.length === 0;
@@ -1308,18 +1524,50 @@ function render() {
   } else if (showEmpty) {
     emptyState.querySelector(".empty__title").textContent = "尚無紀錄";
     emptyState.querySelector(".empty__hint").textContent =
-      "點擊「新增紀錄」記錄日幣購物，收到帳單後用上方快速對帳查找";
+      "點擊「新增」記錄日幣購物，收到帳單後用上方快速對帳查找";
   }
 
   filtered.forEach((r) => recordsList.appendChild(renderRecordCard(r, billTwd)));
 }
 
-function setActiveTab(groupSelector, activeBtn) {
-  $$(groupSelector).forEach((btn) => {
-    const isActive = btn === activeBtn;
-    btn.classList.toggle("tab--active", isActive);
-    btn.setAttribute("aria-selected", isActive ? "true" : "false");
-  });
+/** @param {string} bankId */
+function renderBankPanel(bankId) {
+  const panel = getBankPanel(bankId);
+  if (!panel) return;
+
+  const state = getBankState(bankId);
+  const billTwd = getBillTwdForBank(bankId);
+  const filtered = getFilteredForBank(bankId);
+
+  updateMatchHintForBank(bankId, filtered, billTwd);
+  updateStatsForBank(bankId);
+
+  const isBillsView = state.viewMode === "bills";
+  const billsSection = panel.querySelector(".bank-panel__bills");
+  const toolbar = panel.querySelector("[data-toolbar]");
+  const recordsList = panel.querySelector("[data-records-list]");
+
+  if (billsSection) billsSection.hidden = !isBillsView;
+  if (toolbar) toolbar.hidden = isBillsView;
+  if (recordsList) recordsList.hidden = isBillsView;
+
+  if (isBillsView) {
+    renderMonthlyBillsForBank(bankId, filtered, billTwd);
+  } else {
+    renderRecordsListForBank(bankId, filtered, billTwd);
+  }
+}
+
+function render() {
+  for (const bank of BANKS) {
+    renderBankPanel(bank.id);
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 /** @param {ProductItem[]} [products] */
@@ -1435,12 +1683,14 @@ function collectProductsFromForm() {
     .filter((p) => p.name);
 }
 
-function openAdd() {
+/** @param {string} [bankId] */
+function openAdd(bankId = currentBankId) {
   modalTitle.textContent = "新增刷卡紀錄";
   recordId.value = "";
   recordForm.reset();
-  if (bankIdInput) bankIdInput.value = currentBankId;
-  updateBillMonthFormHints(currentBankId);
+  if (bankIdInput) bankIdInput.value = bankId;
+  currentBankId = bankId;
+  updateBillMonthFormHints(bankId);
   payDate.value = todayISO();
   syncBillMonthFromPayDate();
   renderProductInputs([{ name: "", quantity: 1, amountJpy: 0 }]);
@@ -1537,12 +1787,10 @@ function handleSave(e) {
   }
 
   saveRecords(records);
-  if (data.bankId !== currentBankId) {
-    switchBank(data.bankId);
-  }
-  expandedMonths.add(data.billMonth);
+  getBankState(data.bankId).expandedMonths.add(data.billMonth);
   recordModal.close();
   render();
+  scrollToBankAfterSave(data.bankId);
 }
 
 function confirmDelete() {
@@ -1555,11 +1803,8 @@ function confirmDelete() {
   render();
 }
 
-function confirmDelete() {
-  searchInput.value = "";
-  filterFrom.value = "";
-  filterTo.value = "";
-  billTwdLookup.value = "";
+function clearAllFilters() {
+  for (const bank of BANKS) clearPanelFilters(bank.id);
   render();
 }
 
@@ -1568,7 +1813,7 @@ function bindClick(selector, handler) {
   if (el) el.addEventListener("click", handler);
 }
 
-bindClick("#btnAdd", openAdd);
+bindClick("#btnAdd", () => openAdd(currentBankId));
 btnAddProduct.addEventListener("click", () => {
   renderProductInputs([...collectProductsFromForm(), { name: "", quantity: 1, amountJpy: 0 }]);
   const inputs = productsList.querySelectorAll(".product-row__name");
@@ -1602,45 +1847,12 @@ $("#btnCancelDelete").addEventListener("click", () => {
 });
 $("#btnConfirmDelete").addEventListener("click", confirmDelete);
 
-$("#btnClearFilter").addEventListener("click", clearAllFilters);
-$("#btnClearBillLookup").addEventListener("click", () => {
-  billTwdLookup.value = "";
-  billTwdLookup.focus();
-  render();
-});
-
-$$('[data-status]').forEach((btn) => {
-  btn.addEventListener("click", () => {
-    statusFilter = btn.dataset.status;
-    setActiveTab('[data-status]', btn);
-    render();
-  });
-});
-
-$$('[data-sort]').forEach((btn) => {
-  btn.addEventListener("click", () => {
-    sortMode = btn.dataset.sort;
-    setActiveTab('[data-sort]', btn);
-    render();
-  });
-});
-
-$$('[data-view]').forEach((btn) => {
-  btn.addEventListener("click", () => {
-    viewMode = btn.dataset.view;
-    setActiveTab('[data-view]', btn);
-    render();
-  });
-});
-
-searchInput.addEventListener("input", render);
-filterFrom.addEventListener("change", render);
-filterTo.addEventListener("change", render);
-billTwdLookup.addEventListener("input", render);
-
-initBankSwitcher();
+initBankPanels();
 initBankSelect();
-updateBankUI();
 showOriginWarning();
 initGoogleSync();
 render();
+
+if (BANK_BY_ID[currentBankId]) {
+  requestAnimationFrame(() => scrollToBank(currentBankId));
+}
