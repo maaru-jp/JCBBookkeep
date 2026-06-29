@@ -1124,9 +1124,7 @@ const productsList = $("#productsList");
 const productsJpyTotal = $("#productsJpyTotal");
 const amazonPointsJpyInput = $("#amazonPointsJpy");
 const couponJpyInput = $("#couponJpy");
-const hasShippingJpyInput = $("#hasShippingJpy");
 const shippingJpyInput = $("#shippingJpy");
-const shippingField = $("#shippingField");
 const btnAddProduct = $("#btnAddProduct");
 const amountTwd = $("#amountTwd");
 const payDate = $("#payDate");
@@ -1663,18 +1661,7 @@ function renderProductInputs(products) {
 }
 
 function getShippingFromForm() {
-  if (!hasShippingJpyInput?.checked) return 0;
   return Math.max(0, Math.round(Number(shippingJpyInput?.value) || 0));
-}
-
-function syncShippingFieldUI() {
-  const enabled = Boolean(hasShippingJpyInput?.checked);
-  if (shippingField) shippingField.hidden = !enabled;
-  if (shippingJpyInput) {
-    shippingJpyInput.disabled = !enabled;
-    shippingJpyInput.required = enabled;
-    if (!enabled) shippingJpyInput.value = "0";
-  }
 }
 
 function getDeductionsFromForm() {
@@ -1727,9 +1714,7 @@ function openAdd(bankId = currentBankId) {
   renderProductInputs([{ name: "", quantity: 1, amountJpy: 0 }]);
   amazonPointsJpyInput.value = "0";
   couponJpyInput.value = "0";
-  if (hasShippingJpyInput) hasShippingJpyInput.checked = false;
   if (shippingJpyInput) shippingJpyInput.value = "0";
-  syncShippingFieldUI();
   updateProductsJpyTotal();
   recordModal.showModal();
   packageNo.focus();
@@ -1747,9 +1732,7 @@ function openEdit(id) {
   renderProductInputs(r.products.length ? r.products : [{ name: "", quantity: 1, amountJpy: 0 }]);
   amazonPointsJpyInput.value = String(r.amazonPointsJpy || 0);
   couponJpyInput.value = String(r.couponJpy || 0);
-  if (hasShippingJpyInput) hasShippingJpyInput.checked = (r.shippingJpy || 0) > 0;
   if (shippingJpyInput) shippingJpyInput.value = r.shippingJpy ? String(r.shippingJpy) : "0";
-  syncShippingFieldUI();
   updateProductsJpyTotal();
   amountTwd.value = r.amountTwd ? String(r.amountTwd) : "";
   payDate.value = r.payDate;
@@ -1804,13 +1787,10 @@ function handleSave(e) {
     data.amountJpy < 0 ||
     data.amountTwd < 0 ||
     Number.isNaN(data.amountTwd) ||
-    (hasShippingJpyInput?.checked && data.shippingJpy < 1) ||
     data.amazonPointsJpy + data.couponJpy > jpyBase;
 
   if (invalid) {
-    if (hasShippingJpyInput?.checked && data.shippingJpy < 1) {
-      alert("請輸入運費日幣金額，或取消「有付運費」。");
-    } else if (data.amazonPointsJpy + data.couponJpy > jpyBase) {
+    if (data.amazonPointsJpy + data.couponJpy > jpyBase) {
       alert("亞馬遜積分與優惠券合計不能超過商品小計加運費。");
     }
     return;
@@ -1878,13 +1858,6 @@ if (bankIdInput) {
 }
 amazonPointsJpyInput.addEventListener("input", updateProductsJpyTotal);
 couponJpyInput.addEventListener("input", updateProductsJpyTotal);
-if (hasShippingJpyInput) {
-  hasShippingJpyInput.addEventListener("change", () => {
-    syncShippingFieldUI();
-    updateProductsJpyTotal();
-    if (hasShippingJpyInput.checked) shippingJpyInput?.focus();
-  });
-}
 if (shippingJpyInput) shippingJpyInput.addEventListener("input", updateProductsJpyTotal);
 
 const btnApplyBillMonth = $("#btnApplyBillMonth");
