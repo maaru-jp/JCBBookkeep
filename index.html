@@ -80,11 +80,15 @@
           </div>
           <div class="products-list" id="productsList"></div>
           <fieldset class="deductions-field">
-            <legend class="deductions-field__legend">運費與折抵（選填，自動計入日幣合計）</legend>
+            <legend class="deductions-field__legend">運費、消費稅（10%）與折抵（選填，自動計入日幣合計）</legend>
             <div class="field-row field-row--deductions">
               <label class="field field--deduction">
                 <span class="field__label">運費 ¥</span>
                 <input type="number" id="shippingJpy" class="field__input" placeholder="0" min="0" step="1" inputmode="numeric" autocomplete="off" />
+              </label>
+              <label class="field field--deduction">
+                <span class="field__label">消費稅（10%） ¥</span>
+                <input type="number" id="consumptionTaxJpy" class="field__input" placeholder="0" min="0" step="1" inputmode="numeric" autocomplete="off" />
               </label>
               <label class="field field--deduction">
                 <span class="field__label">亞馬遜積分抵扣 ¥</span>
@@ -104,7 +108,7 @@
             <span class="field__label"><span class="currency-badge currency-badge--twd">NT$</span> 台幣金額（帳單明細）</span>
             <input type="number" id="amountTwd" class="field__input" placeholder="收到帳單後填入，可先留空" min="0" step="1" />
           </label>
-          <p class="amount-group__hint">日幣＝商品加總 ＋ 運費 − 積分 − 優惠券；台幣等帳單出來再填。</p>
+          <p class="amount-group__hint">日幣＝商品加總 ＋ 運費 ＋ 消費稅（10%） − 積分 − 優惠券；台幣等帳單出來再填。</p>
         </fieldset>
         <div class="field-row">
           <label class="field">
