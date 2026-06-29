@@ -20,18 +20,35 @@
         </div>
       </div>
       <div class="header__actions">
-        <button type="button" class="btn btn--ghost" id="btnLinkSpreadsheet" title="連結本機 Excel 試算表">連結試算表</button>
+        <button type="button" class="btn btn--ghost" id="btnLinkSpreadsheetHeader" title="連結本機 Excel">本機試算表</button>
         <button type="button" class="btn btn--ghost" id="btnExport" title="匯出 Excel（一家銀行一個分頁）">匯出試算表</button>
         <button type="button" class="btn btn--primary" id="btnAdd">＋ 新增紀錄</button>
       </div>
     </header>
 
     <div class="spreadsheet-bar" id="spreadsheetBar" aria-live="polite">
-      <span class="spreadsheet-bar__icon" aria-hidden="true">📊</span>
-      <span class="spreadsheet-bar__text" id="spreadsheetStatus">尚未連結試算表。連結 Excel 後，一個檔案內每家銀行各一個分頁。</span>
+      <span class="spreadsheet-bar__icon" aria-hidden="true">💾</span>
+      <span class="spreadsheet-bar__label">本機 Excel</span>
+      <span class="spreadsheet-bar__text" id="spreadsheetStatus">尚未連結。連結 .xlsx 後，每家銀行一個分頁，儲存後自動寫入。</span>
       <div class="spreadsheet-bar__actions">
-        <button type="button" class="btn btn--ghost btn--sm" id="btnSyncSpreadsheet" hidden>立即同步</button>
-        <button type="button" class="btn btn--ghost btn--sm" id="btnUnlinkSpreadsheet" hidden>解除連結</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnLinkSpreadsheet" title="連結本機 Excel">連結本機</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnSyncSpreadsheet" hidden>同步本機</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnUnlinkSpreadsheet" hidden>解除</button>
+      </div>
+    </div>
+
+    <div class="spreadsheet-bar spreadsheet-bar--google" id="googleBar" aria-live="polite">
+      <span class="spreadsheet-bar__icon" aria-hidden="true">☁️</span>
+      <span class="spreadsheet-bar__label">Google 試算表</span>
+      <div class="spreadsheet-bar__google-setup">
+        <input type="url" id="gasUrlInput" class="spreadsheet-bar__url" placeholder="貼上 Apps Script 部署 URL" autocomplete="off" spellcheck="false" />
+        <span class="spreadsheet-bar__text" id="googleStatus">貼上部署 URL 後連結，與 Google 試算表同步（一家銀行一個分頁）。</span>
+      </div>
+      <div class="spreadsheet-bar__actions">
+        <button type="button" class="btn btn--ghost btn--sm" id="btnConnectGoogle">連結 Google</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnPullGoogle" hidden>從雲端載入</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnSyncGoogle" hidden>立即上傳</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="btnDisconnectGoogle" hidden>解除</button>
       </div>
     </div>
 

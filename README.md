@@ -84,14 +84,12 @@ const BANKS = [
 
 ## 資料儲存
 
-- **瀏覽器 localStorage**：操作當下的暫存，清除網站資料會刪除
-- **試算表自動同步（建議）**：連結 **Excel（.xlsx）** 後，富邦、玉山會寫入**不同工作表**；儲存後自動更新
-- 請使用 **Chrome 或 Edge** 開啟，並在連結時允許檔案寫入權限
-- 若 Excel 已開啟同一檔案，請先關閉再同步，否則可能寫入失敗
-- 亦可隨時用「匯出試算表」下載多工作表備份
-- 若先前連結的是 CSV，請解除連結後改連結 .xlsx
+- **瀏覽器 localStorage**：操作當下的暫存
+- **Google 試算表（建議）**：貼上 Apps Script 部署 URL 連結，每家銀行一個分頁，儲存後自動上傳
+- **本機 Excel（.xlsx）**：Chrome／Edge 可連結本機檔案自動寫入
+- 亦可 **匯出試算表** 手動備份
 
-資料不會上傳到網路。請定期確認試算表檔案已更新。
+Google 連線需先部署 `google-apps-script/Code.gs`，詳見 [`google-apps-script/README.md`](google-apps-script/README.md)。
 
 既有紀錄會自動歸入 **富邦銀行**（原 JCB 代碼）；各銀行的「已繳卡費」狀態以 `銀行代碼:帳單月份` 分開儲存。
 
