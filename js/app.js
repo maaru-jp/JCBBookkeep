@@ -28,7 +28,7 @@ function migrateBankId(bankId) {
 }
 
 /** @typedef {{ name: string, quantity: number, amountJpy: number }} ProductItem */
-/** @typedef {{ id: string, bankId: string, packageNo: string, products: ProductItem[], productsSubtotalJpy: number, amazonPointsJpy: number, couponJpy: number, amountJpy: number, amountTwd: number, payDate: string, billMonth: string, note: string, reconciled: boolean, createdAt: string }} Record */
+/** @typedef {{ id: string, bankId: string, packageNo: string, products: ProductItem[], productsSubtotalJpy: number, shippingJpy: number, amazonPointsJpy: number, couponJpy: number, amountJpy: number, amountTwd: number, payDate: string, billMonth: string, note: string, reconciled: boolean, createdAt: string }} Record */
 /** @typedef {{ paid: boolean, paidDate: string }} BillSettlement */
 
 function pad2(n) {
@@ -145,15 +145,21 @@ function formatProductLineDisplay(p) {
   return `${qty}${formatJpy(p.amountJpy)}`;
 }
 
-function calcFinalJpy(subtotal, amazonPointsJpy, couponJpy) {
+function calcFinalJpy(subtotal, shippingJpy, amazonPointsJpy, couponJpy) {
+  const shipping = Math.max(0, Math.round(Number(shippingJpy) || 0));
   const amazon = Math.max(0, Math.round(Number(amazonPointsJpy) || 0));
   const coupon = Math.max(0, Math.round(Number(couponJpy) || 0));
-  return Math.max(0, subtotal - amazon - coupon);
+  return Math.max(0, subtotal + shipping - amazon - coupon);
 }
 
-/** @param {{ subtotal: number, amazonPointsJpy: number, couponJpy: number, total: number }} jpy */
+/** @param {{ subtotal: number, shippingJpy: number, amazonPointsJpy: number, couponJpy: number, total: number }} jpy */
 function renderJpySummaryHtml(jpy) {
   const lines = [`<div class="jpy-summary__row"><span>商品小計</span><span>${formatJpy(jpy.subtotal)}</span></div>`];
+  if (jpy.shippingJpy > 0) {
+    lines.push(
+      `<div class="jpy-summary__row jpy-summary__row--plus"><span>＋ 運費</span><span>${formatJpy(jpy.shippingJpy)}</span></div>`
+    );
+  }
   if (jpy.amazonPointsJpy > 0) {
     lines.push(
       `<div class="jpy-summary__row jpy-summary__row--minus"><span>− 亞馬遜積分</span><span>${formatJpy(jpy.amazonPointsJpy)}</span></div>`
@@ -173,10 +179,12 @@ function renderJpySummaryHtml(jpy) {
 /** @param {Record} r */
 function renderCardJpyDetail(r) {
   const subtotal = r.productsSubtotalJpy ?? sumProductsJpy(r.products);
-  if (r.amazonPointsJpy <= 0 && r.couponJpy <= 0) {
+  const shippingJpy = r.shippingJpy || 0;
+  if (shippingJpy <= 0 && r.amazonPointsJpy <= 0 && r.couponJpy <= 0) {
     return `<span class="record-card__jpy-ref">日幣合計 ${formatJpy(r.amountJpy)}</span>`;
   }
   const parts = [`小計 ${formatJpy(subtotal)}`];
+  if (shippingJpy > 0) parts.push(`運費 ${formatJpy(shippingJpy)}`);
   if (r.amazonPointsJpy > 0) parts.push(`積分 −¥ ${r.amazonPointsJpy.toLocaleString("ja-JP")}`);
   if (r.couponJpy > 0) parts.push(`券 −¥ ${r.couponJpy.toLocaleString("ja-JP")}`);
   parts.push(`合計 ${formatJpy(r.amountJpy)}`);
@@ -227,10 +235,11 @@ function normalizeRecord(raw) {
   const payDate = r.payDate ?? "";
   const products = normalizeProducts(r);
   const productsSubtotalJpy = sumProductsJpy(products);
+  const shippingJpy = Math.max(0, Math.round(Number(r.shippingJpy ?? 0)));
   const amazonPointsJpy = Math.max(0, Math.round(Number(r.amazonPointsJpy ?? 0)));
   const couponJpy = Math.max(0, Math.round(Number(r.couponJpy ?? 0)));
-  let amountJpy = calcFinalJpy(productsSubtotalJpy, amazonPointsJpy, couponJpy);
-  if (amountJpy === 0 && productsSubtotalJpy === 0) {
+  let amountJpy = calcFinalJpy(productsSubtotalJpy, shippingJpy, amazonPointsJpy, couponJpy);
+  if (amountJpy === 0 && productsSubtotalJpy === 0 && shippingJpy === 0) {
     amountJpy = Math.max(0, Math.round(Number(r.amountJpy ?? 0)));
   }
   const bankId = migrateBankId(r.bankId);
@@ -240,6 +249,7 @@ function normalizeRecord(raw) {
     packageNo: r.packageNo ?? "",
     products,
     productsSubtotalJpy,
+    shippingJpy,
     amazonPointsJpy,
     couponJpy,
     amountJpy,
@@ -413,6 +423,7 @@ function recordToGasPayload(r) {
     packageNo: r.packageNo,
     products: r.products,
     productsSubtotalJpy: r.productsSubtotalJpy,
+    shippingJpy: r.shippingJpy,
     amazonPointsJpy: r.amazonPointsJpy,
     couponJpy: r.couponJpy,
     amountJpy: r.amountJpy,
@@ -1113,6 +1124,9 @@ const productsList = $("#productsList");
 const productsJpyTotal = $("#productsJpyTotal");
 const amazonPointsJpyInput = $("#amazonPointsJpy");
 const couponJpyInput = $("#couponJpy");
+const hasShippingJpyInput = $("#hasShippingJpy");
+const shippingJpyInput = $("#shippingJpy");
+const shippingField = $("#shippingField");
 const btnAddProduct = $("#btnAddProduct");
 const amountTwd = $("#amountTwd");
 const payDate = $("#payDate");
@@ -1648,6 +1662,21 @@ function renderProductInputs(products) {
   updateProductsJpyTotal();
 }
 
+function getShippingFromForm() {
+  if (!hasShippingJpyInput?.checked) return 0;
+  return Math.max(0, Math.round(Number(shippingJpyInput?.value) || 0));
+}
+
+function syncShippingFieldUI() {
+  const enabled = Boolean(hasShippingJpyInput?.checked);
+  if (shippingField) shippingField.hidden = !enabled;
+  if (shippingJpyInput) {
+    shippingJpyInput.disabled = !enabled;
+    shippingJpyInput.required = enabled;
+    if (!enabled) shippingJpyInput.value = "0";
+  }
+}
+
 function getDeductionsFromForm() {
   return {
     amazonPointsJpy: Math.max(0, Math.round(Number(amazonPointsJpyInput.value) || 0)),
@@ -1657,10 +1686,12 @@ function getDeductionsFromForm() {
 
 function updateProductsJpyTotal() {
   const subtotal = sumProductsJpy(collectProductsFromForm());
+  const shippingJpy = getShippingFromForm();
   const { amazonPointsJpy, couponJpy } = getDeductionsFromForm();
-  const total = calcFinalJpy(subtotal, amazonPointsJpy, couponJpy);
+  const total = calcFinalJpy(subtotal, shippingJpy, amazonPointsJpy, couponJpy);
   productsJpyTotal.innerHTML = renderJpySummaryHtml({
     subtotal,
+    shippingJpy,
     amazonPointsJpy,
     couponJpy,
     total,
@@ -1696,6 +1727,9 @@ function openAdd(bankId = currentBankId) {
   renderProductInputs([{ name: "", quantity: 1, amountJpy: 0 }]);
   amazonPointsJpyInput.value = "0";
   couponJpyInput.value = "0";
+  if (hasShippingJpyInput) hasShippingJpyInput.checked = false;
+  if (shippingJpyInput) shippingJpyInput.value = "0";
+  syncShippingFieldUI();
   updateProductsJpyTotal();
   recordModal.showModal();
   packageNo.focus();
@@ -1713,6 +1747,9 @@ function openEdit(id) {
   renderProductInputs(r.products.length ? r.products : [{ name: "", quantity: 1, amountJpy: 0 }]);
   amazonPointsJpyInput.value = String(r.amazonPointsJpy || 0);
   couponJpyInput.value = String(r.couponJpy || 0);
+  if (hasShippingJpyInput) hasShippingJpyInput.checked = (r.shippingJpy || 0) > 0;
+  if (shippingJpyInput) shippingJpyInput.value = r.shippingJpy ? String(r.shippingJpy) : "0";
+  syncShippingFieldUI();
   updateProductsJpyTotal();
   amountTwd.value = r.amountTwd ? String(r.amountTwd) : "";
   payDate.value = r.payDate;
@@ -1737,13 +1774,15 @@ function handleSave(e) {
   const twdRaw = amountTwd.value.trim();
   const products = collectProductsFromForm();
   const productsSubtotalJpy = sumProductsJpy(products);
+  const shippingJpy = getShippingFromForm();
   const { amazonPointsJpy, couponJpy } = getDeductionsFromForm();
-  const amountJpy = calcFinalJpy(productsSubtotalJpy, amazonPointsJpy, couponJpy);
+  const amountJpy = calcFinalJpy(productsSubtotalJpy, shippingJpy, amazonPointsJpy, couponJpy);
   const data = {
     bankId: bankIdInput?.value && BANK_BY_ID[bankIdInput.value] ? bankIdInput.value : currentBankId,
     packageNo: packageNo.value.trim(),
     products,
     productsSubtotalJpy,
+    shippingJpy,
     amazonPointsJpy,
     couponJpy,
     amountJpy,
@@ -1754,6 +1793,7 @@ function handleSave(e) {
   };
 
   const invalidProducts = products.some((p) => p.amountJpy < 1 || p.quantity < 1);
+  const jpyBase = data.productsSubtotalJpy + data.shippingJpy;
   const invalid =
     !data.bankId ||
     !data.packageNo ||
@@ -1764,11 +1804,14 @@ function handleSave(e) {
     data.amountJpy < 0 ||
     data.amountTwd < 0 ||
     Number.isNaN(data.amountTwd) ||
-    data.amazonPointsJpy + data.couponJpy > data.productsSubtotalJpy;
+    (hasShippingJpyInput?.checked && data.shippingJpy < 1) ||
+    data.amazonPointsJpy + data.couponJpy > jpyBase;
 
   if (invalid) {
-    if (data.amazonPointsJpy + data.couponJpy > data.productsSubtotalJpy) {
-      alert("亞馬遜積分與優惠券合計不能超過商品日幣小計。");
+    if (hasShippingJpyInput?.checked && data.shippingJpy < 1) {
+      alert("請輸入運費日幣金額，或取消「有付運費」。");
+    } else if (data.amazonPointsJpy + data.couponJpy > jpyBase) {
+      alert("亞馬遜積分與優惠券合計不能超過商品小計加運費。");
     }
     return;
   }
@@ -1835,6 +1878,14 @@ if (bankIdInput) {
 }
 amazonPointsJpyInput.addEventListener("input", updateProductsJpyTotal);
 couponJpyInput.addEventListener("input", updateProductsJpyTotal);
+if (hasShippingJpyInput) {
+  hasShippingJpyInput.addEventListener("change", () => {
+    syncShippingFieldUI();
+    updateProductsJpyTotal();
+    if (hasShippingJpyInput.checked) shippingJpyInput?.focus();
+  });
+}
+if (shippingJpyInput) shippingJpyInput.addEventListener("input", updateProductsJpyTotal);
 
 const btnApplyBillMonth = $("#btnApplyBillMonth");
 if (btnApplyBillMonth) {
