@@ -72,7 +72,7 @@ body::before {
 }
 
 .app {
-  max-width: 920px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 1.75rem 1.25rem 3.5rem;
 }
@@ -148,49 +148,180 @@ body::before {
   gap: 0.5rem;
 }
 
-/* Bank switcher */
-.bank-switcher {
+/* Bank overview & panels */
+.bank-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.bank-overview-card {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 1.25rem;
-  padding: 0.3rem;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 1rem 1.125rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-card);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
 }
 
-.bank-tab {
-  flex: 1 1 auto;
-  min-width: 7rem;
-  padding: 0.625rem 1rem;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  font-family: var(--font);
-  font-size: 0.9375rem;
+.bank-overview-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  border-color: rgba(212, 132, 138, 0.35);
+}
+
+.bank-overview-card__name {
+  font-family: var(--font-jp);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.bank-overview-card__meta {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.bank-overview-card__amounts {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--indigo);
+}
+
+.bank-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.bank-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  scroll-margin-top: 1rem;
+}
+
+.bank-panel[data-bank="fubon"] {
+  border-top: 3px solid var(--indigo);
+}
+
+.bank-panel[data-bank="esun"] {
+  border-top: 3px solid var(--sakura);
+}
+
+.bank-panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  padding: 1.25rem 1.35rem 1rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.bank-panel__head-main {
+  flex: 1;
+  min-width: 200px;
+}
+
+.bank-panel__head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bank-panel__title {
+  margin: 0;
+  font-family: var(--font-jp);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  display: inline;
+}
+
+.bank-panel__cycle {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-size: 0.6875rem;
   font-weight: 600;
   color: var(--text-muted);
-  cursor: pointer;
-  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.15s;
-}
-
-.bank-tab:hover {
   background: var(--surface-2);
-  color: var(--text);
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-soft);
+  vertical-align: middle;
 }
 
-.bank-tab--active {
-  background: var(--indigo-soft);
-  border-color: rgba(91, 107, 138, 0.2);
+.bank-panel__desc {
+  margin: 0.4rem 0 0;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.bank-panel__desc strong {
   color: var(--indigo);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.6) inset;
 }
 
-.bank-tab:focus-visible {
-  outline: 2px solid var(--sakura);
-  outline-offset: 2px;
+.bank-panel__pending {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--sakura-deep);
+  background: var(--sakura-soft);
+  padding: 0.35rem 0.85rem;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  border: 1px solid rgba(212, 132, 138, 0.2);
+}
+
+.bank-panel__stats {
+  margin: 1rem 1.35rem 0;
+}
+
+.bank-panel__reconcile {
+  margin: 1rem 1.35rem 0;
+}
+
+.bank-panel__bills {
+  margin: 1rem 1.35rem 0;
+}
+
+.bank-panel__bills .monthly-bills__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.875rem;
+}
+
+.bank-panel__bills .monthly-bills__title {
+  margin: 0;
+  font-family: var(--font-jp);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.bank-panel__toolbar {
+  margin: 1rem 1.35rem 0;
+}
+
+.bank-panel__records {
+  margin: 0 1.35rem 1.25rem;
+}
+
+.bank-panel .reconcile__title {
+  font-size: 1rem;
 }
 
 .field--bank {
