@@ -1074,10 +1074,6 @@ body::before {
   font-weight: 600;
 }
 
-.field--shipping {
-  margin-top: 0.65rem;
-}
-
 .deductions-field {
   margin: 0.75rem 0 0;
   padding: 0.75rem 0 0;
@@ -1095,10 +1091,19 @@ body::before {
 
 .field-row--deductions {
   margin-top: 0;
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .field--deduction .field__input {
   font-family: var(--mono);
+  background: var(--surface);
+  color: var(--text);
+}
+
+@media (max-width: 640px) {
+  .field-row--deductions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .jpy-summary {
