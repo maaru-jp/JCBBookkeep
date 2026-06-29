@@ -1660,6 +1660,14 @@ function renderProductInputs(products) {
   updateProductsJpyTotal();
 }
 
+function resetShippingInput() {
+  if (!shippingJpyInput) return;
+  shippingJpyInput.disabled = false;
+  shippingJpyInput.readOnly = false;
+  shippingJpyInput.removeAttribute("aria-disabled");
+  shippingJpyInput.value = "";
+}
+
 function getShippingFromForm() {
   return Math.max(0, Math.round(Number(shippingJpyInput?.value) || 0));
 }
@@ -1714,7 +1722,7 @@ function openAdd(bankId = currentBankId) {
   renderProductInputs([{ name: "", quantity: 1, amountJpy: 0 }]);
   amazonPointsJpyInput.value = "0";
   couponJpyInput.value = "0";
-  if (shippingJpyInput) shippingJpyInput.value = "0";
+  resetShippingInput();
   updateProductsJpyTotal();
   recordModal.showModal();
   packageNo.focus();
@@ -1732,7 +1740,11 @@ function openEdit(id) {
   renderProductInputs(r.products.length ? r.products : [{ name: "", quantity: 1, amountJpy: 0 }]);
   amazonPointsJpyInput.value = String(r.amazonPointsJpy || 0);
   couponJpyInput.value = String(r.couponJpy || 0);
-  if (shippingJpyInput) shippingJpyInput.value = r.shippingJpy ? String(r.shippingJpy) : "0";
+  if (shippingJpyInput) {
+    shippingJpyInput.disabled = false;
+    shippingJpyInput.readOnly = false;
+    shippingJpyInput.value = r.shippingJpy ? String(r.shippingJpy) : "";
+  }
   updateProductsJpyTotal();
   amountTwd.value = r.amountTwd ? String(r.amountTwd) : "";
   payDate.value = r.payDate;
