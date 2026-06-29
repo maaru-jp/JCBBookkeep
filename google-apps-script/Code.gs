@@ -31,6 +31,7 @@ const RECORD_HEADERS = [
   "商品名稱",
   "商品日幣小計(¥)",
   "運費(¥)",
+  "消費稅(10%)(¥)",
   "亞馬遜積分抵扣(¥)",
   "平台優惠券抵扣(¥)",
   "日幣合計(¥)",
@@ -237,6 +238,7 @@ function recordToRow_(record) {
     formatProducts_(record.products) || record.productsText || "",
     numOrBlank_(record.productsSubtotalJpy),
     numOrBlank_(record.shippingJpy),
+    numOrBlank_(record.consumptionTaxJpy),
     numOrBlank_(record.amazonPointsJpy),
     numOrBlank_(record.couponJpy),
     numOrBlank_(record.amountJpy),
@@ -249,14 +251,47 @@ function recordToRow_(record) {
 
 /** @param {string} bankId @param {*[]} row @returns {Object} */
 function rowToRecord_(bankId, row) {
-  const hasShippingCol = row.length >= RECORD_HEADERS.length;
-  const shippingAt = 7;
-  const amazonAt = hasShippingCol ? 8 : 7;
-  const couponAt = hasShippingCol ? 9 : 8;
-  const amountAt = hasShippingCol ? 10 : 9;
-  const twdAt = hasShippingCol ? 11 : 10;
-  const payDateAt = hasShippingCol ? 13 : 12;
-  const noteAt = hasShippingCol ? 14 : 13;
+  if (row.length >= 16) {
+    return {
+      id: String(row[0] || ""),
+      bankId: bankId,
+      billMonth: String(row[1] || ""),
+      billPaid: row[2] === "是",
+      reconciled: row[3] === "已對帳",
+      packageNo: String(row[4] || ""),
+      productsText: String(row[5] || ""),
+      productsSubtotalJpy: toNum_(row[6]),
+      shippingJpy: toNum_(row[7]),
+      consumptionTaxJpy: toNum_(row[8]),
+      amazonPointsJpy: toNum_(row[9]),
+      couponJpy: toNum_(row[10]),
+      amountJpy: toNum_(row[11]),
+      amountTwd: toNum_(row[12]),
+      payDate: formatDateCell_(row[14]),
+      note: String(row[15] || ""),
+    };
+  }
+
+  if (row.length >= 15) {
+    return {
+      id: String(row[0] || ""),
+      bankId: bankId,
+      billMonth: String(row[1] || ""),
+      billPaid: row[2] === "是",
+      reconciled: row[3] === "已對帳",
+      packageNo: String(row[4] || ""),
+      productsText: String(row[5] || ""),
+      productsSubtotalJpy: toNum_(row[6]),
+      shippingJpy: toNum_(row[7]),
+      consumptionTaxJpy: 0,
+      amazonPointsJpy: toNum_(row[8]),
+      couponJpy: toNum_(row[9]),
+      amountJpy: toNum_(row[10]),
+      amountTwd: toNum_(row[11]),
+      payDate: formatDateCell_(row[13]),
+      note: String(row[14] || ""),
+    };
+  }
 
   return {
     id: String(row[0] || ""),
@@ -267,13 +302,14 @@ function rowToRecord_(bankId, row) {
     packageNo: String(row[4] || ""),
     productsText: String(row[5] || ""),
     productsSubtotalJpy: toNum_(row[6]),
-    shippingJpy: hasShippingCol ? toNum_(row[shippingAt]) : 0,
-    amazonPointsJpy: toNum_(row[amazonAt]),
-    couponJpy: toNum_(row[couponAt]),
-    amountJpy: toNum_(row[amountAt]),
-    amountTwd: toNum_(row[twdAt]),
-    payDate: formatDateCell_(row[payDateAt]),
-    note: String(row[noteAt] || ""),
+    shippingJpy: 0,
+    consumptionTaxJpy: 0,
+    amazonPointsJpy: toNum_(row[7]),
+    couponJpy: toNum_(row[8]),
+    amountJpy: toNum_(row[9]),
+    amountTwd: toNum_(row[10]),
+    payDate: formatDateCell_(row[12]),
+    note: String(row[13] || ""),
   };
 }
 
@@ -373,6 +409,7 @@ function insertSampleData() {
       productsText: "無線耳機(¥5980)",
       productsSubtotalJpy: 5980,
       shippingJpy: 0,
+      consumptionTaxJpy: 0,
       amountJpy: 5980,
       payDate: "2025-05-08",
       note: "帳單未到先記日幣",
@@ -400,9 +437,10 @@ function insertSampleData() {
       productsText: "鍵盤(¥8500)",
       productsSubtotalJpy: 8500,
       shippingJpy: 550,
+      consumptionTaxJpy: 770,
       amazonPointsJpy: 500,
       couponJpy: 300,
-      amountJpy: 8250,
+      amountJpy: 9020,
       payDate: "2025-05-10",
       note: "玉山 15 日結帳",
     },
