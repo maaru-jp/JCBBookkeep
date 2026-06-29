@@ -137,7 +137,7 @@ function getRecordsByBank(bankId) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(bank.name);
   if (!sheet || sheet.getLastRow() < 2) return [];
 
-  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, RECORD_HEADERS.length).getValues();
+  const values = sheet.getRange(2, 1, sheet.getLastRow(), RECORD_HEADERS.length).getValues();
   return values
     .filter(function (row) {
       return row[0] || row[4];
@@ -207,13 +207,13 @@ function replaceBankRecords(bankId, records) {
   const rows = records.map(function (r) {
     return recordToRow_(Object.assign({}, r, { bankId: bankId, id: r.id || Utilities.getUuid() }));
   });
-  sheet.getRange(2, 1, rows.length, RECORD_HEADERS.length).setValues(rows);
+  sheet.getRange(2, 1, 1 + rows.length, RECORD_HEADERS.length).setValues(rows);
 }
 
 /** @param {GoogleAppsScript.Spreadsheet.Sheet} sheet @param {string} recordId */
 function findRecordRowIndex_(sheet, recordId) {
   if (sheet.getLastRow() < 2) return -1;
-  const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  const ids = sheet.getRange(2, 1, sheet.getLastRow(), 1).getValues();
   for (var i = 0; i < ids.length; i++) {
     if (String(ids[i][0]) === String(recordId)) return i + 2;
   }
@@ -294,6 +294,26 @@ function formatDateCell_(v) {
   return String(v || "");
 }
 
+/** @returns {Object[]} */
+function getAllSettlements() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SETTLEMENT_SHEET);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+
+  const data = sheet.getRange(2, 1, sheet.getLastRow(), SETTLEMENT_HEADERS.length).getValues();
+  return data
+    .filter(function (row) {
+      return row[0] && row[2];
+    })
+    .map(function (row) {
+      return {
+        bankId: String(row[0]),
+        billMonth: String(row[2]),
+        paid: row[3] === "是",
+        paidDate: formatDateCell_(row[4]),
+      };
+    });
+}
+
 // ─── 帳單繳費狀態 ─────────────────────────────────────
 
 /** @param {string} bankId @param {string} billMonth */
@@ -301,7 +321,7 @@ function settlementPaid_(bankId, billMonth) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SETTLEMENT_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return false;
 
-  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, SETTLEMENT_HEADERS.length).getValues();
+  const data = sheet.getRange(2, 1, sheet.getLastRow(), SETTLEMENT_HEADERS.length).getValues();
   for (var i = 0; i < data.length; i++) {
     if (data[i][0] === bankId && data[i][2] === billMonth) {
       return data[i][3] === "是";
@@ -317,7 +337,7 @@ function setSettlement(bankId, billMonth, paid, paidDate) {
   ensureSettlementSheet_(ss);
   const sheet = ss.getSheetByName(SETTLEMENT_SHEET);
 
-  const data = sheet.getLastRow() >= 2 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues() : [];
+  const data = sheet.getLastRow() >= 2 ? sheet.getRange(2, 1, sheet.getLastRow(), 5).getValues() : [];
   for (var i = 0; i < data.length; i++) {
     if (data[i][0] === bankId && data[i][2] === billMonth) {
       sheet.getRange(i + 2, 4, 1, 2).setValues([[paid ? "是" : "否", paidDate || ""]]);
@@ -411,7 +431,7 @@ function handleApi_(params) {
   const action = params.action || "all";
 
   if (action === "all") {
-    return { ok: true, records: getAllRecords(), banks: BANKS };
+    return { ok: true, records: getAllRecords(), settlements: getAllSettlements(), banks: BANKS };
   }
 
   if (action === "bank") {
