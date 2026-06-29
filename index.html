@@ -79,16 +79,10 @@
             <span>商品名稱</span><span>數量</span><span>日幣金額</span><span></span>
           </div>
           <div class="products-list" id="productsList"></div>
-          <div class="shipping-field">
-            <label class="shipping-toggle">
-              <input type="checkbox" id="hasShippingJpy" />
-              <span>有付運費</span>
-            </label>
-            <label class="field field--shipping" id="shippingField" hidden>
-              <span class="field__label">運費 ¥</span>
-              <input type="number" id="shippingJpy" class="field__input" placeholder="0" min="0" step="1" value="0" inputmode="numeric" />
-            </label>
-          </div>
+          <label class="field field--shipping">
+            <span class="field__label">運費 ¥（選填）</span>
+            <input type="number" id="shippingJpy" class="field__input" placeholder="0" min="0" step="1" value="0" inputmode="numeric" />
+          </label>
           <fieldset class="deductions-field">
             <legend class="deductions-field__legend">折抵（選填，自動從日幣合計扣除）</legend>
             <div class="field-row field-row--deductions">
