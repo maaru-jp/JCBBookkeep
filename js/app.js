@@ -237,10 +237,40 @@ function renderProductsHtml(products) {
   return `<ul class="record-card__products" aria-label="商品清單">${items}</ul>`;
 }
 
+/**
+ * 統一為 YYYY-MM。Google 試算表可能把月份欄存成日期，讀回時會是完整日期字串。
+ * @param {unknown} value
+ */
+function normalizeBillMonth(value) {
+  if (!value) return "";
+  const s = String(value).trim();
+  const matched = s.match(/^(\d{4})-(\d{2})/);
+  if (matched) return `${matched[1]}-${matched[2]}`;
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+  return "";
+}
+
+/**
+ * 統一為 YYYY-MM-DD。
+ * @param {unknown} value
+ */
+function normalizeDateString(value) {
+  if (!value) return "";
+  const s = String(value).trim();
+  const matched = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (matched) return `${matched[1]}-${matched[2]}-${matched[3]}`;
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+  return "";
+}
+
 /** @param {unknown} raw */
 function normalizeRecord(raw) {
   const r = /** @type {Record & { amount?: number, productName?: string }} */ (raw);
-  const payDate = r.payDate ?? "";
+  const payDate = normalizeDateString(r.payDate);
   const products = normalizeProducts(r);
   const productsSubtotalJpy = sumProductsJpy(products);
   const shippingJpy = Math.max(0, Math.round(Number(r.shippingJpy ?? 0)));
@@ -265,7 +295,7 @@ function normalizeRecord(raw) {
     amountJpy,
     amountTwd: Number(r.amountTwd ?? r.amount ?? 0),
     payDate,
-    billMonth: r.billMonth || inferBillMonth(payDate, bankId),
+    billMonth: normalizeBillMonth(r.billMonth) || inferBillMonth(payDate, bankId),
     note: r.note ?? "",
     reconciled: Boolean(r.reconciled),
     createdAt: r.createdAt ?? new Date().toISOString(),
@@ -296,11 +326,12 @@ function loadRecords() {
 /** @param {string} key */
 function migrateSettlementKey(key) {
   if (/^\d{4}-\d{2}$/.test(key)) return `${DEFAULT_BANK_ID}:${key}`;
-  for (const [legacy, next] of Object.entries(LEGACY_BANK_IDS)) {
-    const prefix = `${legacy}:`;
-    if (key.startsWith(prefix)) return `${next}:${key.slice(prefix.length)}`;
-  }
-  return key;
+
+  const sep = key.indexOf(":");
+  if (sep < 0) return key;
+  const bankId = migrateBankId(key.slice(0, sep));
+  const month = normalizeBillMonth(key.slice(sep + 1));
+  return month ? `${bankId}:${month}` : key;
 }
 
 /** @returns {Record<string, BillSettlement>} */
@@ -566,10 +597,11 @@ function applyGoogleData(data) {
   if (Array.isArray(data.settlements) && data.settlements.length) {
     const next = { ...settlements };
     for (const s of data.settlements) {
-      if (!s.bankId || !s.billMonth) continue;
-      next[settlementKey(s.bankId, s.billMonth)] = {
+      const billMonth = normalizeBillMonth(s.billMonth);
+      if (!s.bankId || !billMonth) continue;
+      next[settlementKey(s.bankId, billMonth)] = {
         paid: Boolean(s.paid),
-        paidDate: s.paidDate || "",
+        paidDate: normalizeDateString(s.paidDate),
       };
     }
     settlements = next;
