@@ -102,6 +102,8 @@ function ensureRecordSheet_(ss, name) {
       sheet.setFrozenRows(1);
     }
   }
+
+  ensureMonthColumnText_(sheet, 2);
 }
 
 /** @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss */
@@ -115,6 +117,27 @@ function ensureSettlementSheet_(ss) {
     formatHeaderRow_(sheet, SETTLEMENT_HEADERS.length);
     sheet.setFrozenRows(1);
   }
+
+  ensureMonthColumnText_(sheet, 3);
+}
+
+/**
+ * 帳單月份欄固定為純文字，避免 2026-07 被試算表判定成日期；
+ * 同時把先前已被轉成日期的儲存格改回 yyyy-MM。
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet @param {number} col
+ */
+function ensureMonthColumnText_(sheet, col) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) {
+    sheet.getRange(2, col, sheet.getMaxRows() - 1, 1).setNumberFormat("@");
+    return;
+  }
+
+  const range = sheet.getRange(2, col, lastRow - 1, 1);
+  const fixed = range.getValues().map(function (row) {
+    return [row[0] === "" ? "" : formatMonthCell_(row[0])];
+  });
+  range.setNumberFormat("@").setValues(fixed);
 }
 
 /** @param {GoogleAppsScript.Spreadsheet.Sheet} sheet @param {number} cols */
@@ -229,10 +252,12 @@ function recordToRow_(record) {
       ? (Number(record.amountTwd) / Number(record.amountJpy)).toFixed(4)
       : record.rate || "";
 
+  const billMonth = formatMonthCell_(record.billMonth);
+
   return [
     record.id || "",
-    record.billMonth || "",
-    record.billPaid ? "是" : settlementPaid_(record.bankId, record.billMonth) ? "是" : "否",
+    billMonth,
+    record.billPaid ? "是" : settlementPaid_(record.bankId, billMonth) ? "是" : "否",
     record.reconciled ? "已對帳" : "待對帳",
     record.packageNo || "",
     formatProducts_(record.products) || record.productsText || "",
@@ -255,7 +280,7 @@ function rowToRecord_(bankId, row) {
     return {
       id: String(row[0] || ""),
       bankId: bankId,
-      billMonth: String(row[1] || ""),
+      billMonth: formatMonthCell_(row[1]),
       billPaid: row[2] === "是",
       reconciled: row[3] === "已對帳",
       packageNo: String(row[4] || ""),
@@ -276,7 +301,7 @@ function rowToRecord_(bankId, row) {
     return {
       id: String(row[0] || ""),
       bankId: bankId,
-      billMonth: String(row[1] || ""),
+      billMonth: formatMonthCell_(row[1]),
       billPaid: row[2] === "是",
       reconciled: row[3] === "已對帳",
       packageNo: String(row[4] || ""),
@@ -296,7 +321,7 @@ function rowToRecord_(bankId, row) {
   return {
     id: String(row[0] || ""),
     bankId: bankId,
-    billMonth: String(row[1] || ""),
+    billMonth: formatMonthCell_(row[1]),
     billPaid: row[2] === "是",
     reconciled: row[3] === "已對帳",
     packageNo: String(row[4] || ""),
@@ -342,6 +367,16 @@ function formatDateCell_(v) {
   return String(v || "");
 }
 
+/** 帳單月份一律回傳 yyyy-MM；試算表可能把 2026-07 自動判定成日期 */
+function formatMonthCell_(v) {
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), "yyyy-MM");
+  }
+  const s = String(v || "").trim();
+  const matched = s.match(/^(\d{4})-(\d{2})/);
+  return matched ? matched[1] + "-" + matched[2] : s;
+}
+
 /** @returns {Object[]} */
 function getAllSettlements() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SETTLEMENT_SHEET);
@@ -355,7 +390,7 @@ function getAllSettlements() {
     .map(function (row) {
       return {
         bankId: String(row[0]),
-        billMonth: String(row[2]),
+        billMonth: formatMonthCell_(row[2]),
         paid: row[3] === "是",
         paidDate: formatDateCell_(row[4]),
       };
@@ -369,9 +404,10 @@ function settlementPaid_(bankId, billMonth) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SETTLEMENT_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return false;
 
+  const target = formatMonthCell_(billMonth);
   const data = sheet.getRange(2, 1, sheet.getLastRow(), SETTLEMENT_HEADERS.length).getValues();
   for (var i = 0; i < data.length; i++) {
-    if (data[i][0] === bankId && data[i][2] === billMonth) {
+    if (data[i][0] === bankId && formatMonthCell_(data[i][2]) === target) {
       return data[i][3] === "是";
     }
   }
@@ -385,14 +421,15 @@ function setSettlement(bankId, billMonth, paid, paidDate) {
   ensureSettlementSheet_(ss);
   const sheet = ss.getSheetByName(SETTLEMENT_SHEET);
 
+  const target = formatMonthCell_(billMonth);
   const data = sheet.getLastRow() >= 2 ? sheet.getRange(2, 1, sheet.getLastRow(), 5).getValues() : [];
   for (var i = 0; i < data.length; i++) {
-    if (data[i][0] === bankId && data[i][2] === billMonth) {
+    if (data[i][0] === bankId && formatMonthCell_(data[i][2]) === target) {
       sheet.getRange(i + 2, 4, 1, 2).setValues([[paid ? "是" : "否", paidDate || ""]]);
       return;
     }
   }
-  sheet.appendRow([bankId, bank.name, billMonth, paid ? "是" : "否", paidDate || ""]);
+  sheet.appendRow([bankId, bank.name, target, paid ? "是" : "否", paidDate || ""]);
 }
 
 // ─── 範例資料 ─────────────────────────────────────────
