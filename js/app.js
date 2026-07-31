@@ -101,6 +101,21 @@ function formatClosingDaySummary(bankId) {
   return `每月 ${getClosingDay(bankId)} 日結帳`;
 }
 
+/** 合理金額上限；超過視為欄位錯位（例如日期被當成金額）而歸零 */
+const MAX_SANE_AMOUNT = 100000000;
+
+/**
+ * 金額防呆：日期物件、負數、天文數字一律視為 0。
+ * 試算表欄位錯位時，日期會被換算成毫秒（上兆），不能直接當金額使用。
+ * @param {unknown} value
+ */
+function sanitizeMoney(value) {
+  if (value instanceof Date) return 0;
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || n < 0 || n > MAX_SANE_AMOUNT) return 0;
+  return n;
+}
+
 /** @param {unknown} raw */
 function normalizeProducts(raw) {
   const r = /** @type {{ products?: unknown[], productName?: string }} */ (raw);
@@ -115,9 +130,9 @@ function normalizeProducts(raw) {
         const item = /** @type {{ name?: string, quantity?: number, unitJpy?: number, amountJpy?: number }} */ (p);
         const name = String(item.name ?? "").trim();
         if (!name) return null;
-        const quantity = Math.max(1, Math.round(Number(item.quantity ?? 1)));
-        let amountJpy = Math.max(0, Math.round(Number(item.amountJpy ?? 0)));
-        const unitJpy = Math.round(Number(item.unitJpy ?? 0));
+        const quantity = Math.max(1, Math.round(Number(item.quantity ?? 1)) || 1);
+        let amountJpy = sanitizeMoney(item.amountJpy);
+        const unitJpy = sanitizeMoney(item.unitJpy);
         if (!amountJpy && unitJpy) amountJpy = unitJpy * quantity;
         return { name, quantity, amountJpy };
       })
@@ -272,14 +287,15 @@ function normalizeRecord(raw) {
   const r = /** @type {Record & { amount?: number, productName?: string }} */ (raw);
   const payDate = normalizeDateString(r.payDate);
   const products = normalizeProducts(r);
-  const productsSubtotalJpy = sumProductsJpy(products);
-  const shippingJpy = Math.max(0, Math.round(Number(r.shippingJpy ?? 0)));
-  const consumptionTaxJpy = Math.max(0, Math.round(Number(r.consumptionTaxJpy ?? 0)));
-  const amazonPointsJpy = Math.max(0, Math.round(Number(r.amazonPointsJpy ?? 0)));
-  const couponJpy = Math.max(0, Math.round(Number(r.couponJpy ?? 0)));
+  // 商品欄文字解析不出金額時（例如從試算表讀回的舊格式），改用來源的小計
+  const productsSubtotalJpy = sumProductsJpy(products) || sanitizeMoney(r.productsSubtotalJpy);
+  const shippingJpy = sanitizeMoney(r.shippingJpy);
+  const consumptionTaxJpy = sanitizeMoney(r.consumptionTaxJpy);
+  const amazonPointsJpy = sanitizeMoney(r.amazonPointsJpy);
+  const couponJpy = sanitizeMoney(r.couponJpy);
   let amountJpy = calcFinalJpy(productsSubtotalJpy, shippingJpy, consumptionTaxJpy, amazonPointsJpy, couponJpy);
   if (amountJpy === 0 && productsSubtotalJpy === 0 && shippingJpy === 0 && consumptionTaxJpy === 0) {
-    amountJpy = Math.max(0, Math.round(Number(r.amountJpy ?? 0)));
+    amountJpy = sanitizeMoney(r.amountJpy);
   }
   const bankId = migrateBankId(r.bankId);
   return {
@@ -293,7 +309,7 @@ function normalizeRecord(raw) {
     amazonPointsJpy,
     couponJpy,
     amountJpy,
-    amountTwd: Number(r.amountTwd ?? r.amount ?? 0),
+    amountTwd: sanitizeMoney(r.amountTwd ?? r.amount),
     payDate,
     billMonth: normalizeBillMonth(r.billMonth) || inferBillMonth(payDate, bankId),
     note: r.note ?? "",
@@ -314,6 +330,8 @@ function loadRecords() {
       const before = item.bankId;
       const normalized = normalizeRecord(item);
       if (before && migrateBankId(before) !== before) needsSave = true;
+      // 金額被防呆修掉（例如同步錯位存進來的日期毫秒）時，寫回乾淨的值
+      if (Number(item.amountTwd ?? 0) !== normalized.amountTwd) needsSave = true;
       return normalized;
     });
     if (needsSave) localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
@@ -609,6 +627,32 @@ function applyGoogleData(data) {
   }
 }
 
+/**
+ * 試算表某家銀行變成空的時，載入前先確認，避免把本機僅存的資料一起清掉。
+ * @param {{ records?: Object[] }} data
+ * @returns {boolean} 是否繼續載入
+ */
+function confirmPullLoss(data) {
+  const remote = Array.isArray(data.records) ? data.records : [];
+  const lost = BANKS.filter((bank) => {
+    const localCount = records.filter((r) => r.bankId === bank.id).length;
+    const remoteCount = remote.filter((r) => migrateBankId(r.bankId) === bank.id).length;
+    return localCount > 0 && remoteCount === 0;
+  });
+
+  if (!lost.length) return true;
+
+  const detail = lost
+    .map((bank) => `• ${bank.name}：本機 ${records.filter((r) => r.bankId === bank.id).length} 筆 → 試算表 0 筆`)
+    .join("\n");
+
+  return confirm(
+    `Google 試算表上這些分頁是空的：\n\n${detail}\n\n` +
+      "按「確定」→ 照試算表載入（本機這些紀錄會被清掉）\n" +
+      "按「取消」→ 保留本機資料（建議：先到試算表用「檔案 → 版本紀錄」還原）"
+  );
+}
+
 function updateGoogleSyncUI() {
   const bar = $("#googleBar");
   const status = $("#googleStatus");
@@ -700,6 +744,11 @@ async function pullFromGoogle() {
 
   try {
     const data = await gasPost({ action: "all" });
+    if (!confirmPullLoss(data)) {
+      googleSyncing = false;
+      updateGoogleSyncUI();
+      return;
+    }
     applyGoogleData(data);
     googleLastSync = formatSyncTime();
     for (const bank of BANKS) {
