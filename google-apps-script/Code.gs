@@ -44,12 +44,75 @@ const RECORD_HEADERS = [
 const SETTLEMENT_SHEET = "_帳單繳費";
 const SETTLEMENT_HEADERS = ["銀行ID", "銀行名稱", "帳單月份", "已繳卡費", "繳費日期"];
 
+// ─── 欄位對應（以標題列為準，相容舊版欄位數）─────────
+
+/**
+ * 標題文字 → 內部欄位鍵。
+ * 用關鍵字比對，因此舊版標題（沒有運費／消費稅欄）也能正確對應，
+ * 不會因為欄位數不同而整列錯位。
+ * @param {*} title
+ */
+function headerKey_(title) {
+  const t = String(title || "").replace(/\s/g, "");
+  if (!t) return "";
+  if (t.indexOf("紀錄ID") >= 0 || t === "ID") return "id";
+  if (t.indexOf("月份") >= 0) return "billMonth";
+  if (t.indexOf("已繳") >= 0) return "billPaid";
+  if (t.indexOf("對帳") >= 0) return "reconciled";
+  if (t.indexOf("包裹") >= 0) return "packageNo";
+  if (t.indexOf("商品名稱") >= 0) return "products";
+  if (t.indexOf("小計") >= 0) return "productsSubtotalJpy";
+  if (t.indexOf("運費") >= 0) return "shippingJpy";
+  if (t.indexOf("消費稅") >= 0) return "consumptionTaxJpy";
+  if (t.indexOf("積分") >= 0) return "amazonPointsJpy";
+  if (t.indexOf("優惠券") >= 0) return "couponJpy";
+  if (t.indexOf("日幣合計") >= 0) return "amountJpy";
+  if (t.indexOf("台幣") >= 0) return "amountTwd";
+  if (t.indexOf("匯率") >= 0) return "rate";
+  if (t.indexOf("日期") >= 0) return "payDate";
+  if (t.indexOf("備註") >= 0) return "note";
+  return "";
+}
+
+/** @param {*[]} header @returns {Object} 欄位鍵 → 0-based 欄索引 */
+function buildHeaderMap_(header) {
+  const map = {};
+  for (var i = 0; i < header.length; i++) {
+    const key = headerKey_(header[i]);
+    if (key && map[key] === undefined) map[key] = i;
+  }
+  return map;
+}
+
+/** 目前版本的欄位對應 */
+const CURRENT_HEADER_MAP = buildHeaderMap_(RECORD_HEADERS);
+
+/** @param {*[]} header 標題列是否已是目前版本 */
+function isCurrentHeader_(header) {
+  for (var i = 0; i < RECORD_HEADERS.length; i++) {
+    const actual = String(header[i] || "").replace(/\s/g, "");
+    if (actual !== RECORD_HEADERS[i].replace(/\s/g, "")) return false;
+  }
+  return true;
+}
+
+/** @param {Object} map @param {*[]} row 該列是否有實際內容 */
+function rowHasContent_(map, row) {
+  const keys = ["id", "packageNo", "products"];
+  for (var i = 0; i < keys.length; i++) {
+    const idx = map[keys[i]];
+    if (idx !== undefined && String(row[idx] || "").trim() !== "") return true;
+  }
+  return false;
+}
+
 // ─── 選單 ─────────────────────────────────────────────
 
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("刷卡紀錄")
     .addItem("初始化試算表（建立各銀行分頁）", "initializeSpreadsheet")
+    .addItem("修正欄位錯位（重新對齊）", "repairAllSheets")
     .addItem("插入範例資料", "insertSampleData")
     .addSeparator()
     .addItem("匯出全部 JSON", "showAllRecordsJson")
@@ -88,22 +151,126 @@ function ensureRecordSheet_(ss, name) {
     sheet = ss.insertSheet(name);
   }
 
+  ensureColumnCount_(sheet);
+
   if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, RECORD_HEADERS.length).setValues([RECORD_HEADERS]);
-    formatHeaderRow_(sheet, RECORD_HEADERS.length);
-    sheet.setFrozenRows(1);
-    sheet.setColumnWidth(1, 120);
+    writeHeaderRow_(sheet);
   } else {
-    const firstRow = sheet.getRange(1, 1, 1, RECORD_HEADERS.length).getValues()[0];
-    if (firstRow[0] !== RECORD_HEADERS[0]) {
-      sheet.insertRowBefore(1);
-      sheet.getRange(1, 1, 1, RECORD_HEADERS.length).setValues([RECORD_HEADERS]);
-      formatHeaderRow_(sheet, RECORD_HEADERS.length);
-      sheet.setFrozenRows(1);
-    }
+    upgradeRecordSheet_(sheet);
   }
 
-  ensureMonthColumnText_(sheet, 2);
+  ensureMonthColumnText_(sheet, CURRENT_HEADER_MAP.billMonth + 1);
+  return sheet;
+}
+
+/** 分頁欄數不足時補足，避免讀寫超出範圍 */
+function ensureColumnCount_(sheet) {
+  const missing = RECORD_HEADERS.length - sheet.getMaxColumns();
+  if (missing > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), missing);
+}
+
+/** @param {GoogleAppsScript.Spreadsheet.Sheet} sheet */
+function writeHeaderRow_(sheet) {
+  sheet.getRange(1, 1, 1, RECORD_HEADERS.length).setValues([RECORD_HEADERS]);
+  formatHeaderRow_(sheet, RECORD_HEADERS.length);
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 120);
+}
+
+/**
+ * 舊版標題（欄位較少）會讓每一列往左錯位，金額欄讀到日期。
+ * 這裡先依「舊標題列」把資料正確解讀，再依目前欄位順序整批寫回。
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ */
+function upgradeRecordSheet_(sheet) {
+  const lastRow = sheet.getLastRow();
+  const lastCol = Math.min(Math.max(sheet.getLastColumn(), 1), sheet.getMaxColumns());
+  const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const map = buildHeaderMap_(header);
+
+  // 找不到可辨識的標題 → 第 1 列可能是資料，補回標題列
+  if (map.id === undefined && map.packageNo === undefined) {
+    sheet.insertRowBefore(1);
+    writeHeaderRow_(sheet);
+    return;
+  }
+
+  if (isCurrentHeader_(header)) return;
+
+  const dataRows = lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, lastCol).getValues() : [];
+  const records = dataRows
+    .filter(function (row) {
+      return rowHasContent_(map, row);
+    })
+    .map(function (row) {
+      return rowToRecord_("", row, map);
+    });
+
+  // 有資料卻一筆都認不出來 → 對應可能有誤，寧可不動也不要清空
+  if (dataRows.length && !records.length) {
+    throw new Error("「" + sheet.getName() + "」的標題列無法對應欄位，已中止以免清空資料。");
+  }
+
+  writeHeaderRow_(sheet);
+  writeRecordRows_(
+    sheet,
+    records.map(function (r) {
+      return recordToRow_(Object.assign({}, r, { id: r.id || Utilities.getUuid() }));
+    })
+  );
+  trimRowsAfter_(sheet, 1 + records.length);
+}
+
+/**
+ * 先覆寫再刪除多餘列。
+ * 若先刪除再寫入，中途出錯就會只剩標題列（資料全失）。
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet @param {*[][]} rows
+ */
+function writeRecordRows_(sheet, rows) {
+  if (!rows.length) return;
+  ensureRowCapacity_(sheet, 1 + rows.length);
+  // 先鎖成文字，避免 2026-07 被試算表判定成日期
+  sheet.getRange(2, CURRENT_HEADER_MAP.billMonth + 1, rows.length, 1).setNumberFormat("@");
+  sheet.getRange(2, 1, rows.length, RECORD_HEADERS.length).setValues(rows);
+}
+
+/** 分頁列數不足時補足，避免 setValues 超出範圍而中斷 */
+function ensureRowCapacity_(sheet, needed) {
+  const missing = needed - sheet.getMaxRows();
+  if (missing > 0) sheet.insertRowsAfter(sheet.getMaxRows(), missing);
+}
+
+/** @param {GoogleAppsScript.Spreadsheet.Sheet} sheet @param {number} keepRows 保留的列數（含標題列） */
+function trimRowsAfter_(sheet, keepRows) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow > keepRows) sheet.deleteRows(keepRows + 1, lastRow - keepRows);
+}
+
+/**
+ * 修復用：依標題列重新對齊所有分頁的欄位。
+ * 舊版分頁欄位較少時，金額欄會讀到日期（出現上兆的台幣金額），執行此項即可修正。
+ */
+function repairAllSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const backups = [];
+
+  // 動手前先各留一份備份分頁
+  BANKS.forEach(function (bank) {
+    const sheet = ss.getSheetByName(bank.name);
+    if (sheet && sheet.getLastRow() > 1) backups.push(backupSheet_(sheet).getName());
+  });
+
+  BANKS.forEach(function (bank) {
+    ensureRecordSheet_(ss, bank.name);
+  });
+  ensureSettlementSheet_(ss);
+
+  SpreadsheetApp.getUi().alert(
+    "已重新對齊欄位",
+    "各銀行分頁已改為目前欄位順序。\n請回到網頁按「從雲端載入」重新讀取。" +
+      (backups.length ? "\n\n已建立備份分頁：\n• " + backups.join("\n• ") : ""),
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
 }
 
 /** @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss */
@@ -162,13 +329,18 @@ function getRecordsByBank(bankId) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(bank.name);
   if (!sheet || sheet.getLastRow() < 2) return [];
 
-  const values = sheet.getRange(2, 1, sheet.getLastRow(), RECORD_HEADERS.length).getValues();
+  const lastCol = Math.min(Math.max(sheet.getLastColumn(), 1), sheet.getMaxColumns());
+  const header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const parsed = buildHeaderMap_(header);
+  const map = Object.keys(parsed).length ? parsed : CURRENT_HEADER_MAP;
+
+  const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
   return values
     .filter(function (row) {
-      return row[0] || row[4];
+      return rowHasContent_(map, row);
     })
     .map(function (row) {
-      return rowToRecord_(bank.id, row);
+      return rowToRecord_(bank.id, row, map);
     });
 }
 
@@ -182,8 +354,7 @@ function getAllRecords() {
 /** @param {string} bankId @param {Object} record */
 function appendRecord(bankId, record) {
   const bank = getBankConfig_(bankId);
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(bank.name);
-  if (!sheet) throw new Error("找不到分頁：" + bank.name);
+  const sheet = ensureRecordSheet_(SpreadsheetApp.getActiveSpreadsheet(), bank.name);
 
   const id = record.id || Utilities.getUuid();
   const row = recordToRow_(Object.assign({}, record, { id: id, bankId: bankId }));
@@ -194,13 +365,16 @@ function appendRecord(bankId, record) {
 /** @param {string} bankId @param {string} recordId @param {Object} updates */
 function updateRecord(bankId, recordId, updates) {
   const bank = getBankConfig_(bankId);
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(bank.name);
-  if (!sheet) throw new Error("找不到分頁：" + bank.name);
+  const sheet = ensureRecordSheet_(SpreadsheetApp.getActiveSpreadsheet(), bank.name);
 
   const rowIndex = findRecordRowIndex_(sheet, recordId);
   if (rowIndex < 0) throw new Error("找不到紀錄：" + recordId);
 
-  const existing = rowToRecord_(bankId, sheet.getRange(rowIndex, 1, 1, RECORD_HEADERS.length).getValues()[0]);
+  const existing = rowToRecord_(
+    bankId,
+    sheet.getRange(rowIndex, 1, 1, RECORD_HEADERS.length).getValues()[0],
+    CURRENT_HEADER_MAP
+  );
   const merged = Object.assign({}, existing, updates, { id: recordId, bankId: bankId });
   sheet.getRange(rowIndex, 1, 1, RECORD_HEADERS.length).setValues([recordToRow_(merged)]);
 }
@@ -219,26 +393,37 @@ function deleteRecord(bankId, recordId) {
 function replaceBankRecords(bankId, records) {
   const bank = getBankConfig_(bankId);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  ensureRecordSheet_(ss, bank.name);
-  const sheet = ss.getSheetByName(bank.name);
+  const sheet = ensureRecordSheet_(ss, bank.name);
 
-  const lastRow = sheet.getLastRow();
-  if (lastRow > 1) {
-    sheet.deleteRows(2, lastRow - 1);
-  }
-
-  if (!records || !records.length) return;
-
-  const rows = records.map(function (r) {
+  const rows = (records || []).map(function (r) {
     return recordToRow_(Object.assign({}, r, { bankId: bankId, id: r.id || Utilities.getUuid() }));
   });
-  sheet.getRange(2, 1, 1 + rows.length, RECORD_HEADERS.length).setValues(rows);
+
+  // 遠端要求清空、但分頁內有資料時先備份，避免同步失誤直接抹掉整個分頁
+  if (!rows.length && sheet.getLastRow() > 1) {
+    backupSheet_(sheet);
+  }
+
+  writeRecordRows_(sheet, rows);
+  trimRowsAfter_(sheet, 1 + rows.length);
+}
+
+/**
+ * 把分頁複製成一份備份分頁（同一份試算表內）。
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ */
+function backupSheet_(sheet) {
+  const ss = sheet.getParent();
+  const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyyMMdd-HHmmss");
+  const copy = sheet.copyTo(ss);
+  copy.setName(("_備份 " + sheet.getName() + " " + stamp).slice(0, 100));
+  return copy;
 }
 
 /** @param {GoogleAppsScript.Spreadsheet.Sheet} sheet @param {string} recordId */
 function findRecordRowIndex_(sheet, recordId) {
   if (sheet.getLastRow() < 2) return -1;
-  const ids = sheet.getRange(2, 1, sheet.getLastRow(), 1).getValues();
+  const ids = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < ids.length; i++) {
     if (String(ids[i][0]) === String(recordId)) return i + 2;
   }
@@ -269,72 +454,49 @@ function recordToRow_(record) {
     numOrBlank_(record.amountJpy),
     numOrBlank_(record.amountTwd),
     rate,
-    record.payDate || "",
+    formatDateCell_(record.payDate),
     record.note || "",
   ];
 }
 
-/** @param {string} bankId @param {*[]} row @returns {Object} */
-function rowToRecord_(bankId, row) {
-  if (row.length >= 16) {
-    return {
-      id: String(row[0] || ""),
-      bankId: bankId,
-      billMonth: formatMonthCell_(row[1]),
-      billPaid: row[2] === "是",
-      reconciled: row[3] === "已對帳",
-      packageNo: String(row[4] || ""),
-      productsText: String(row[5] || ""),
-      productsSubtotalJpy: toNum_(row[6]),
-      shippingJpy: toNum_(row[7]),
-      consumptionTaxJpy: toNum_(row[8]),
-      amazonPointsJpy: toNum_(row[9]),
-      couponJpy: toNum_(row[10]),
-      amountJpy: toNum_(row[11]),
-      amountTwd: toNum_(row[12]),
-      payDate: formatDateCell_(row[14]),
-      note: String(row[15] || ""),
-    };
+/**
+ * 依標題對應把整列轉成紀錄物件。
+ * 用欄位名稱而非固定位置，舊版分頁（欄位較少）也不會錯位。
+ * @param {string} bankId @param {*[]} row @param {Object} [map] @returns {Object}
+ */
+function rowToRecord_(bankId, row, map) {
+  const m = map || CURRENT_HEADER_MAP;
+
+  function cell(key) {
+    const idx = m[key];
+    return idx === undefined ? "" : row[idx];
   }
 
-  if (row.length >= 15) {
-    return {
-      id: String(row[0] || ""),
-      bankId: bankId,
-      billMonth: formatMonthCell_(row[1]),
-      billPaid: row[2] === "是",
-      reconciled: row[3] === "已對帳",
-      packageNo: String(row[4] || ""),
-      productsText: String(row[5] || ""),
-      productsSubtotalJpy: toNum_(row[6]),
-      shippingJpy: toNum_(row[7]),
-      consumptionTaxJpy: 0,
-      amazonPointsJpy: toNum_(row[8]),
-      couponJpy: toNum_(row[9]),
-      amountJpy: toNum_(row[10]),
-      amountTwd: toNum_(row[11]),
-      payDate: formatDateCell_(row[13]),
-      note: String(row[14] || ""),
-    };
+  const twdCell = cell("amountTwd");
+  let payDate = formatDateCell_(cell("payDate"));
+
+  // 舊資料錯位時，金額欄可能實際存的是刷卡日期：救回日期、金額歸零
+  if (!payDate && twdCell instanceof Date) {
+    payDate = formatDateCell_(twdCell);
   }
 
   return {
-    id: String(row[0] || ""),
+    id: String(cell("id") || ""),
     bankId: bankId,
-    billMonth: formatMonthCell_(row[1]),
-    billPaid: row[2] === "是",
-    reconciled: row[3] === "已對帳",
-    packageNo: String(row[4] || ""),
-    productsText: String(row[5] || ""),
-    productsSubtotalJpy: toNum_(row[6]),
-    shippingJpy: 0,
-    consumptionTaxJpy: 0,
-    amazonPointsJpy: toNum_(row[7]),
-    couponJpy: toNum_(row[8]),
-    amountJpy: toNum_(row[9]),
-    amountTwd: toNum_(row[10]),
-    payDate: formatDateCell_(row[12]),
-    note: String(row[13] || ""),
+    billMonth: formatMonthCell_(cell("billMonth")),
+    billPaid: cell("billPaid") === "是",
+    reconciled: cell("reconciled") === "已對帳",
+    packageNo: String(cell("packageNo") || ""),
+    productsText: String(cell("products") || ""),
+    productsSubtotalJpy: toNum_(cell("productsSubtotalJpy")),
+    shippingJpy: toNum_(cell("shippingJpy")),
+    consumptionTaxJpy: toNum_(cell("consumptionTaxJpy")),
+    amazonPointsJpy: toNum_(cell("amazonPointsJpy")),
+    couponJpy: toNum_(cell("couponJpy")),
+    amountJpy: toNum_(cell("amountJpy")),
+    amountTwd: toNum_(twdCell),
+    payDate: payDate,
+    note: String(cell("note") || ""),
   };
 }
 
@@ -351,12 +513,18 @@ function formatProducts_(products) {
 
 function numOrBlank_(n) {
   if (n === null || n === undefined || n === "") return "";
-  return Number(n) || 0;
+  return toNum_(n);
 }
 
 function toNum_(v) {
   if (v === "" || v === null || v === undefined) return 0;
-  return Math.round(Number(v)) || 0;
+  // 日期若被放進金額欄，Number(date) 會變成毫秒（上兆的數字），一律視為 0
+  if (v instanceof Date) return 0;
+  if (typeof v === "boolean") return 0;
+
+  const n = typeof v === "number" ? v : Number(String(v).replace(/[^0-9.\-]/g, ""));
+  if (!isFinite(n)) return 0;
+  return Math.round(n) || 0;
 }
 
 /** @param {*} v */
@@ -382,7 +550,7 @@ function getAllSettlements() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SETTLEMENT_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return [];
 
-  const data = sheet.getRange(2, 1, sheet.getLastRow(), SETTLEMENT_HEADERS.length).getValues();
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, SETTLEMENT_HEADERS.length).getValues();
   return data
     .filter(function (row) {
       return row[0] && row[2];
@@ -405,7 +573,7 @@ function settlementPaid_(bankId, billMonth) {
   if (!sheet || sheet.getLastRow() < 2) return false;
 
   const target = formatMonthCell_(billMonth);
-  const data = sheet.getRange(2, 1, sheet.getLastRow(), SETTLEMENT_HEADERS.length).getValues();
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, SETTLEMENT_HEADERS.length).getValues();
   for (var i = 0; i < data.length; i++) {
     if (data[i][0] === bankId && formatMonthCell_(data[i][2]) === target) {
       return data[i][3] === "是";
@@ -422,7 +590,7 @@ function setSettlement(bankId, billMonth, paid, paidDate) {
   const sheet = ss.getSheetByName(SETTLEMENT_SHEET);
 
   const target = formatMonthCell_(billMonth);
-  const data = sheet.getLastRow() >= 2 ? sheet.getRange(2, 1, sheet.getLastRow(), 5).getValues() : [];
+  const data = sheet.getLastRow() >= 2 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues() : [];
   for (var i = 0; i < data.length; i++) {
     if (data[i][0] === bankId && formatMonthCell_(data[i][2]) === target) {
       sheet.getRange(i + 2, 4, 1, 2).setValues([[paid ? "是" : "否", paidDate || ""]]);
