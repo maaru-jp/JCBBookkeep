@@ -28,7 +28,8 @@ function migrateBankId(bankId) {
 }
 
 /** @typedef {{ name: string, quantity: number, amountJpy: number }} ProductItem */
-/** @typedef {{ id: string, bankId: string, packageNo: string, products: ProductItem[], productsSubtotalJpy: number, shippingJpy: number, consumptionTaxJpy: number, amazonPointsJpy: number, couponJpy: number, amountJpy: number, amountTwd: number, payDate: string, billMonth: string, note: string, reconciled: boolean, createdAt: string }} Record */
+/** @typedef {"charge" | "refund"} RecordKind */
+/** @typedef {{ id: string, bankId: string, kind: RecordKind, officialCancel: boolean, relatedRecordId: string, packageNo: string, products: ProductItem[], productsSubtotalJpy: number, shippingJpy: number, consumptionTaxJpy: number, amazonPointsJpy: number, couponJpy: number, amountJpy: number, amountTwd: number, payDate: string, billMonth: string, note: string, reconciled: boolean, createdAt: string }} Record */
 /** @typedef {{ paid: boolean, paidDate: string }} BillSettlement */
 
 function pad2(n) {
@@ -282,6 +283,30 @@ function normalizeDateString(value) {
   return "";
 }
 
+/** @param {unknown} value */
+function normalizeKind(value) {
+  const s = String(value || "").trim().toLowerCase();
+  if (s === "refund" || s === "刷退" || s === "退款" || s === "credit") return "refund";
+  return "charge";
+}
+
+/** @param {Record} r */
+function isRefund(r) {
+  return r.kind === "refund";
+}
+
+/** @param {Record} r */
+function signedJpy(r) {
+  const n = r.amountJpy || 0;
+  return isRefund(r) ? -Math.abs(n) : n;
+}
+
+/** @param {Record} r */
+function signedTwd(r) {
+  const n = r.amountTwd || 0;
+  return isRefund(r) ? -Math.abs(n) : n;
+}
+
 /** @param {unknown} raw */
 function normalizeRecord(raw) {
   const r = /** @type {Record & { amount?: number, productName?: string }} */ (raw);
@@ -298,9 +323,13 @@ function normalizeRecord(raw) {
     amountJpy = sanitizeMoney(r.amountJpy);
   }
   const bankId = migrateBankId(r.bankId);
+  const related = r.relatedRecordId ?? r.relatedId ?? "";
   return {
     id: r.id,
     bankId,
+    kind: normalizeKind(r.kind),
+    officialCancel: r.officialCancel === true || r.officialCancel === "是" || r.officialCancel === "true",
+    relatedRecordId: related ? String(related) : "",
     packageNo: r.packageNo ?? "",
     products,
     productsSubtotalJpy,
@@ -477,6 +506,9 @@ function recordToGasPayload(r) {
   return {
     id: r.id,
     bankId: r.bankId,
+    kind: r.kind,
+    officialCancel: r.officialCancel,
+    relatedRecordId: r.relatedRecordId,
     billMonth: r.billMonth,
     reconciled: r.reconciled,
     packageNo: r.packageNo,
@@ -841,6 +873,11 @@ function formatJpy(n) {
 
 function formatTwd(n) {
   if (!n) return "待填帳單台幣";
+  return formatTwdNet(n);
+}
+
+/** 月合計／統計用：0 與負數都顯示數字，不當成未填 */
+function formatTwdNet(n) {
   return `NT$ ${Number(n).toLocaleString("zh-TW")}`;
 }
 
@@ -904,7 +941,46 @@ function recordsForBank(bankId) {
 
 function twdMatchesBill(recordTwd, billTwd) {
   if (!billTwd || !recordTwd) return false;
-  return recordTwd === billTwd;
+  return Math.abs(recordTwd) === Math.abs(billTwd);
+}
+
+/** @param {Record} r */
+function findRelatedCharge(r) {
+  if (r.relatedRecordId) {
+    const byId = records.find((x) => x.id === r.relatedRecordId);
+    if (byId) return byId;
+  }
+  return records.find(
+    (x) => x.id !== r.id && x.bankId === r.bankId && x.packageNo === r.packageNo && !isRefund(x)
+  );
+}
+
+function getRecordKindFromForm() {
+  const checked = document.querySelector('input[name="recordKind"]:checked');
+  return checked && checked.value === "refund" ? "refund" : "charge";
+}
+
+/** @param {RecordKind} kind */
+function setRecordKindOnForm(kind) {
+  const radios = document.querySelectorAll('input[name="recordKind"]');
+  radios.forEach((el) => {
+    if (el instanceof HTMLInputElement) el.checked = el.value === kind;
+  });
+  updateKindFormUi();
+}
+
+function updateKindFormUi() {
+  const refund = getRecordKindFromForm() === "refund";
+  if (payDateLabel) payDateLabel.textContent = refund ? "刷退入帳日" : "刷卡日期";
+  if (amountTwdHint) {
+    amountTwdHint.textContent = refund
+      ? "刷退請填帳單明細上的退款台幣（正數即可，月合計會自動減掉）。"
+      : "日幣＝商品加總 ＋ 運費 ＋ 消費稅（10%） − 積分 − 優惠券；台幣等帳單出來再填。";
+  }
+  if (officialCancelInput) {
+    officialCancelInput.disabled = refund;
+    if (refund) officialCancelInput.checked = false;
+  }
 }
 
 const $ = (sel) => document.querySelector(sel);
@@ -974,15 +1050,15 @@ function bankPanelTemplate(bank) {
           <strong class="stat-card__value" data-stat-pending>0</strong>
         </article>
         <article class="stat-card stat-card--jpy">
-          <span class="stat-card__label">本期帳單日幣</span>
+          <span class="stat-card__label">本期淨額日幣</span>
           <strong class="stat-card__value" data-stat-month-jpy>¥ 0</strong>
         </article>
         <article class="stat-card stat-card--accent">
-          <span class="stat-card__label">本期帳單台幣</span>
+          <span class="stat-card__label">本期淨額台幣</span>
           <strong class="stat-card__value" data-stat-month-twd>NT$ 0</strong>
         </article>
         <article class="stat-card stat-card--all">
-          <span class="stat-card__label">全部累計</span>
+          <span class="stat-card__label">全部淨額累計</span>
           <strong class="stat-card__value stat-card__value--sm" data-stat-all-jpy>¥ 0</strong>
           <strong class="stat-card__value" data-stat-all-twd>NT$ 0</strong>
         </article>
@@ -992,7 +1068,7 @@ function bankPanelTemplate(bank) {
         <div class="reconcile__top">
           <div>
             <h3 class="reconcile__title">快速對帳</h3>
-            <p class="reconcile__desc">帳單明細只顯示<strong>台幣</strong>。輸入帳單金額即可找出刷日幣的購物紀錄。</p>
+            <p class="reconcile__desc">帳單明細只顯示<strong>台幣</strong>。輸入明細上的正數金額，可找出消費或刷退紀錄。</p>
           </div>
         </div>
         <div class="reconcile__lookup">
@@ -1224,6 +1300,10 @@ const payDate = $("#payDate");
 const billMonthInput = $("#billMonth");
 const note = $("#note");
 const bankIdInput = $("#bankId");
+const relatedRecordIdInput = $("#relatedRecordId");
+const officialCancelInput = $("#officialCancel");
+const payDateLabel = $("#payDateLabel");
+const amountTwdHint = $("#amountTwdHint");
 
 const deleteModal = $("#deleteModal");
 const deletePreview = $("#deletePreview");
@@ -1261,7 +1341,7 @@ function getFilteredForBank(bankId) {
     if (state.statusFilter === "done" && !r.reconciled) return false;
     if (billTwd !== null && !twdMatchesBill(r.amountTwd, billTwd)) return false;
     if (q) {
-      const hay = `${r.packageNo} ${formatProductsSearch(r.products)} ${r.note} ${r.amountTwd} ${r.amountJpy} ${r.billMonth}`.toLowerCase();
+      const hay = `${r.packageNo} ${formatProductsSearch(r.products)} ${r.note} ${r.amountTwd} ${r.amountJpy} ${r.billMonth} ${isRefund(r) ? "刷退 退款" : "消費"} ${r.officialCancel ? "官方取消" : ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     if (from && r.payDate < from) return false;
@@ -1287,7 +1367,12 @@ function groupByBillMonth(list) {
     map.get(key).push(r);
   }
   for (const items of map.values()) {
-    items.sort((a, b) => b.payDate.localeCompare(a.payDate));
+  items.sort((a, b) => {
+    const pkg = String(a.packageNo).localeCompare(String(b.packageNo), "zh-Hant");
+    if (pkg) return pkg;
+    if (isRefund(a) !== isRefund(b)) return isRefund(a) ? 1 : -1;
+    return b.payDate.localeCompare(a.payDate) || b.createdAt.localeCompare(a.createdAt);
+  });
   }
   return map;
 }
@@ -1334,10 +1419,10 @@ function updateStatsForBank(bankId) {
   const bankRecords = recordsForBank(bankId);
   const pending = bankRecords.filter((r) => !r.reconciled);
   const monthRecords = bankRecords.filter((r) => r.billMonth === billMonth);
-  const monthJpy = monthRecords.reduce((s, r) => s + r.amountJpy, 0);
-  const monthTwd = monthRecords.reduce((s, r) => s + r.amountTwd, 0);
-  const allJpy = bankRecords.reduce((s, r) => s + r.amountJpy, 0);
-  const allTwd = bankRecords.reduce((s, r) => s + r.amountTwd, 0);
+  const monthJpy = monthRecords.reduce((s, r) => s + signedJpy(r), 0);
+  const monthTwd = monthRecords.reduce((s, r) => s + signedTwd(r), 0);
+  const allJpy = bankRecords.reduce((s, r) => s + signedJpy(r), 0);
+  const allTwd = bankRecords.reduce((s, r) => s + signedTwd(r), 0);
 
   const pendingBadge = panel.querySelector("[data-pending-badge]");
   if (pendingBadge) pendingBadge.textContent = `待對帳 ${pending.length} 筆`;
@@ -1350,16 +1435,16 @@ function updateStatsForBank(bankId) {
 
   if (statPending) statPending.textContent = String(pending.length);
   if (statMonthJpy) statMonthJpy.textContent = formatJpy(monthJpy);
-  if (statMonthTwd) statMonthTwd.textContent = formatTwd(monthTwd);
+  if (statMonthTwd) statMonthTwd.textContent = formatTwdNet(monthTwd);
   if (statAllJpy) statAllJpy.textContent = formatJpy(allJpy);
-  if (statAllTwd) statAllTwd.textContent = formatTwd(allTwd);
+  if (statAllTwd) statAllTwd.textContent = formatTwdNet(allTwd);
 
   const overviewCard = $(`.bank-overview-card[data-bank="${bankId}"]`);
   if (overviewCard) {
     const meta = overviewCard.querySelector("[data-overview-meta]");
     const amounts = overviewCard.querySelector("[data-overview-amounts]");
     if (meta) meta.textContent = `${bankRecords.length} 筆 · 待對帳 ${pending.length}`;
-    if (amounts) amounts.textContent = `本期 ${formatTwd(monthTwd)} · ${formatJpy(monthJpy)}`;
+    if (amounts) amounts.textContent = `本期淨額 ${formatTwdNet(monthTwd)} · ${formatJpy(monthJpy)}`;
   }
 }
 
@@ -1443,36 +1528,55 @@ function openAddToMonth(month, bankId) {
 function renderRecordCard(r, billTwd) {
   const card = document.createElement("article");
   const isMatch = billTwd !== null && twdMatchesBill(r.amountTwd, billTwd);
+  const refund = isRefund(r);
   card.className =
     "record-card" +
     (isMatch ? " record-card--match" : "") +
-    (r.reconciled ? " record-card--done" : "");
+    (r.reconciled ? " record-card--done" : "") +
+    (refund ? " record-card--refund" : "") +
+    (r.officialCancel ? " record-card--cancelled" : "");
   card.setAttribute("role", "listitem");
   card.dataset.id = r.id;
 
+  const displayJpy = signedJpy(r);
+  const displayTwd = signedTwd(r);
   const rate = impliedRate(r.amountJpy, r.amountTwd);
   const rateHtml = rate ? `<span class="record-card__rate">匯率約 ${rate}</span>` : "";
   const statusClass = r.reconciled ? "status-badge--done" : "status-badge--pending";
   const statusText = r.reconciled ? "已對帳" : "待對帳";
+  const kindClass = refund ? "status-badge--refund" : "status-badge--charge";
+  const kindText = refund ? "刷退" : "消費";
+  const cancelBadge = r.officialCancel ? `<span class="status-badge status-badge--cancel">官方取消</span>` : "";
   const twdClass = r.amountTwd
-    ? "record-card__bill-amount"
+    ? "record-card__bill-amount" + (refund ? " record-card__bill-amount--credit" : "")
     : "record-card__bill-amount record-card__bill-amount--empty";
   const noteHtml = r.note ? `<p class="record-card__note">${escapeHtml(r.note)}</p>` : "";
+  const linked = refund ? findRelatedCharge(r) : null;
+  const linkedHtml =
+    linked
+      ? `<p class="record-card__link">對應原單 ${escapeHtml(linked.packageNo)} · ${formatDisplayDate(linked.payDate)}</p>`
+      : "";
   const suggested = inferBillMonth(r.payDate, r.bankId);
   const monthHintHtml =
     suggested && suggested !== r.billMonth && usesClosingDayRule(r.bankId)
       ? `<p class="record-card__month-hint">依${getClosingDay(r.bankId)}日結帳建議：${formatBillMonthLabel(suggested)}</p>`
       : "";
+  const refundBtn = !refund
+    ? `<button type="button" class="btn btn--ghost btn--sm" data-action="make-refund">產生刷退</button>`
+    : "";
   card.innerHTML = `
     <div class="record-card__main">
       <div class="record-card__tags">
+        <span class="status-badge ${kindClass}">${kindText}</span>
+        ${cancelBadge}
         <span class="status-badge ${statusClass}">${statusText}</span>
         <span class="record-card__package">${escapeHtml(r.packageNo)}</span>
       </div>
       ${renderProductsHtml(r.products)}
       <div class="record-card__meta">
-        <span class="record-card__date">刷卡 ${formatDisplayDate(r.payDate)}</span>
+        <span class="record-card__date">${refund ? "刷退" : "刷卡"} ${formatDisplayDate(r.payDate)}</span>
         ${renderCardJpyDetail(r)}
+        ${refund ? `<span class="record-card__jpy-ref">淨額 ${formatJpy(displayJpy)}</span>` : ""}
         ${rateHtml}
       </div>
       <label class="move-month">
@@ -1482,15 +1586,17 @@ function renderRecordCard(r, billTwd) {
         </select>
       </label>
       ${monthHintHtml}
+      ${linkedHtml}
       ${noteHtml}
     </div>
     <div class="record-card__side">
       <div class="record-card__bill">
-        <span class="record-card__bill-label">帳單台幣</span>
-        <span class="${twdClass}">${formatTwd(r.amountTwd)}</span>
+        <span class="record-card__bill-label">${refund ? "刷退台幣" : "帳單台幣"}</span>
+        <span class="${twdClass}">${r.amountTwd ? formatTwdNet(displayTwd) : formatTwd(r.amountTwd)}</span>
       </div>
       <div class="record-card__actions">
         <button type="button" class="btn-reconcile ${r.reconciled ? "btn-reconcile--done" : ""}" data-action="reconcile">${r.reconciled ? "✓ 已對帳" : "○ 標記已對帳"}</button>
+        ${refundBtn}
         <button type="button" class="icon-btn" data-action="edit" title="編輯">✎</button>
         <button type="button" class="icon-btn icon-btn--danger" data-action="delete" title="刪除">🗑</button>
       </div>
@@ -1500,6 +1606,8 @@ function renderRecordCard(r, billTwd) {
   card.querySelector('[data-action="reconcile"]').addEventListener("click", () => toggleReconciled(r.id));
   card.querySelector('[data-action="edit"]').addEventListener("click", () => openEdit(r.id));
   card.querySelector('[data-action="delete"]').addEventListener("click", () => openDelete(r.id));
+  const refundEl = card.querySelector('[data-action="make-refund"]');
+  if (refundEl) refundEl.addEventListener("click", () => openRefundFrom(r.id));
   const monthSelect = card.querySelector('[data-action="move-month"]');
   monthSelect.addEventListener("change", () => {
     const val = monthSelect.value;
@@ -1531,8 +1639,8 @@ function renderMonthlyBillsForBank(bankId, filtered, billTwd) {
   for (const month of months) {
     const items = groups.get(month);
     const settlement = getSettlement(month, bankId);
-    const totalTwd = items.reduce((s, r) => s + (r.amountTwd || 0), 0);
-    const totalJpy = items.reduce((s, r) => s + r.amountJpy, 0);
+    const totalTwd = items.reduce((s, r) => s + signedTwd(r), 0);
+    const totalJpy = items.reduce((s, r) => s + signedJpy(r), 0);
     const reconciledCount = items.filter((r) => r.reconciled).length;
     const pct = items.length ? Math.round((reconciledCount / items.length) * 100) : 0;
 
@@ -1560,8 +1668,8 @@ function renderMonthlyBillsForBank(bankId, filtered, billTwd) {
           <div class="bill-month__badges">${paidBadge}<span class="bill-month__badge bill-month__badge--count">${items.length} 筆</span></div>
         </div>
         <div class="bill-month__summary-side">
-          <span class="bill-month__total">${formatTwd(totalTwd)}</span>
-          <span class="bill-month__sub">${formatJpy(totalJpy)}</span>
+          <span class="bill-month__total">${formatTwdNet(totalTwd)}</span>
+          <span class="bill-month__sub">淨額 ${formatJpy(totalJpy)}</span>
         </div>
       </summary>
       <div class="bill-month__body">
@@ -1821,6 +1929,9 @@ function openAdd(bankId = currentBankId) {
   modalTitle.textContent = "新增刷卡紀錄";
   recordId.value = "";
   recordForm.reset();
+  if (relatedRecordIdInput) relatedRecordIdInput.value = "";
+  setRecordKindOnForm("charge");
+  if (officialCancelInput) officialCancelInput.checked = false;
   if (bankIdInput) bankIdInput.value = bankId;
   currentBankId = bankId;
   updateBillMonthFormHints(bankId);
@@ -1836,12 +1947,7 @@ function openAdd(bankId = currentBankId) {
   packageNo.focus();
 }
 
-function openEdit(id) {
-  const r = records.find((x) => x.id === id);
-  if (!r) return;
-
-  modalTitle.textContent = "編輯刷卡紀錄";
-  recordId.value = r.id;
+function fillFormFromRecord(r, { asNewRefund = false } = {}) {
   if (bankIdInput) bankIdInput.value = r.bankId;
   updateBillMonthFormHints(r.bankId);
   packageNo.value = r.packageNo;
@@ -1859,10 +1965,43 @@ function openEdit(id) {
     consumptionTaxJpyInput.value = r.consumptionTaxJpy ? String(r.consumptionTaxJpy) : "";
   }
   updateProductsJpyTotal();
-  amountTwd.value = r.amountTwd ? String(r.amountTwd) : "";
-  payDate.value = r.payDate;
-  billMonthInput.value = r.billMonth || inferBillMonth(r.payDate, r.bankId);
-  note.value = r.note || "";
+  if (asNewRefund) {
+    amountTwd.value = "";
+    payDate.value = todayISO();
+    billMonthInput.value = inferBillMonth(payDate.value, r.bankId);
+    note.value = r.note ? `對應原單：${r.packageNo}` : `對應原單 ${r.packageNo}`;
+  } else {
+    amountTwd.value = r.amountTwd ? String(r.amountTwd) : "";
+    payDate.value = r.payDate;
+    billMonthInput.value = r.billMonth || inferBillMonth(r.payDate, r.bankId);
+    note.value = r.note || "";
+  }
+}
+
+function openRefundFrom(id) {
+  const src = records.find((x) => x.id === id);
+  if (!src || isRefund(src)) return;
+
+  modalTitle.textContent = "新增刷退";
+  recordId.value = "";
+  recordForm.reset();
+  if (relatedRecordIdInput) relatedRecordIdInput.value = src.id;
+  setRecordKindOnForm("refund");
+  fillFormFromRecord(src, { asNewRefund: true });
+  recordModal.showModal();
+  amountTwd.focus();
+}
+
+function openEdit(id) {
+  const r = records.find((x) => x.id === id);
+  if (!r) return;
+
+  modalTitle.textContent = isRefund(r) ? "編輯刷退" : "編輯刷卡紀錄";
+  recordId.value = r.id;
+  if (relatedRecordIdInput) relatedRecordIdInput.value = r.relatedRecordId || "";
+  setRecordKindOnForm(r.kind || "charge");
+  if (officialCancelInput) officialCancelInput.checked = Boolean(r.officialCancel);
+  fillFormFromRecord(r, { asNewRefund: false });
   recordModal.showModal();
   if (!r.amountTwd) amountTwd.focus();
 }
@@ -1886,8 +2025,12 @@ function handleSave(e) {
   const consumptionTaxJpy = getConsumptionTaxFromForm();
   const { amazonPointsJpy, couponJpy } = getDeductionsFromForm();
   const amountJpy = calcFinalJpy(productsSubtotalJpy, shippingJpy, consumptionTaxJpy, amazonPointsJpy, couponJpy);
+  const kind = getRecordKindFromForm();
   const data = {
     bankId: bankIdInput?.value && BANK_BY_ID[bankIdInput.value] ? bankIdInput.value : currentBankId,
+    kind,
+    officialCancel: kind === "refund" ? false : Boolean(officialCancelInput?.checked),
+    relatedRecordId: kind === "refund" ? (relatedRecordIdInput?.value || "") : "",
     packageNo: packageNo.value.trim(),
     products,
     productsSubtotalJpy,
@@ -1983,6 +2126,9 @@ if (bankIdInput) {
     if (!recordId.value) syncBillMonthFromPayDate(true);
   });
 }
+document.querySelectorAll('input[name="recordKind"]').forEach((el) => {
+  el.addEventListener("change", updateKindFormUi);
+});
 amazonPointsJpyInput.addEventListener("input", updateProductsJpyTotal);
 couponJpyInput.addEventListener("input", updateProductsJpyTotal);
 if (shippingJpyInput) shippingJpyInput.addEventListener("input", updateProductsJpyTotal);
