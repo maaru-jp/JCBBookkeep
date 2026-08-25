@@ -27,6 +27,8 @@ const RECORD_HEADERS = [
   "帳單月份",
   "帳單已繳卡費",
   "明細對帳",
+  "類型",
+  "官方取消",
   "包裹單號",
   "商品名稱",
   "商品日幣小計(¥)",
@@ -57,6 +59,8 @@ function headerKey_(title) {
   if (!t) return "";
   if (t.indexOf("紀錄ID") >= 0 || t === "ID") return "id";
   if (t.indexOf("月份") >= 0) return "billMonth";
+  if (t.indexOf("類型") >= 0) return "kind";
+  if (t.indexOf("官方取消") >= 0) return "officialCancel";
   if (t.indexOf("已繳") >= 0) return "billPaid";
   if (t.indexOf("對帳") >= 0) return "reconciled";
   if (t.indexOf("包裹") >= 0) return "packageNo";
@@ -444,6 +448,8 @@ function recordToRow_(record) {
     billMonth,
     record.billPaid ? "是" : settlementPaid_(record.bankId, billMonth) ? "是" : "否",
     record.reconciled ? "已對帳" : "待對帳",
+    record.kind === "refund" || record.kind === "刷退" ? "刷退" : "消費",
+    record.officialCancel || record.officialCancel === "是" ? "是" : "否",
     record.packageNo || "",
     formatProducts_(record.products) || record.productsText || "",
     numOrBlank_(record.productsSubtotalJpy),
@@ -486,6 +492,8 @@ function rowToRecord_(bankId, row, map) {
     billMonth: formatMonthCell_(cell("billMonth")),
     billPaid: cell("billPaid") === "是",
     reconciled: cell("reconciled") === "已對帳",
+    kind: String(cell("kind") || "").indexOf("刷退") >= 0 || String(cell("kind") || "").toLowerCase() === "refund" ? "refund" : "charge",
+    officialCancel: cell("officialCancel") === "是" || cell("officialCancel") === true,
     packageNo: String(cell("packageNo") || ""),
     productsText: String(cell("products") || ""),
     productsSubtotalJpy: toNum_(cell("productsSubtotalJpy")),
