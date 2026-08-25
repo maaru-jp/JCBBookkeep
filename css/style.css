@@ -328,6 +328,60 @@ body::before {
   margin-bottom: 0.25rem;
 }
 
+.kind-field {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 0.85rem 0.65rem;
+  margin: 0 0 0.85rem;
+}
+
+.kind-field__legend {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+
+.kind-field__options {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.kind-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface);
+}
+
+.kind-option:has(input:checked) {
+  border-color: var(--indigo);
+  background: var(--indigo-soft);
+}
+
+.kind-option input {
+  margin: 0;
+}
+
+.field--check {
+  margin-bottom: 0.85rem;
+}
+
+.field__check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
 .origin-warning {
   margin-bottom: 1rem;
   padding: 0.75rem 1rem;
@@ -1422,6 +1476,38 @@ body::before {
   background: var(--accent-soft);
   color: var(--accent-hover);
   border: 1px solid rgba(107, 143, 113, 0.25);
+}
+
+.status-badge--charge {
+  background: var(--indigo-soft);
+  color: var(--indigo);
+  border: 1px solid rgba(91, 107, 138, 0.2);
+}
+
+.status-badge--refund {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid rgba(196, 92, 92, 0.25);
+}
+
+.status-badge--cancel {
+  background: var(--gold-soft);
+  color: #8a6230;
+  border: 1px solid rgba(196, 165, 116, 0.35);
+}
+
+.record-card--refund {
+  border-color: rgba(196, 92, 92, 0.28);
+}
+
+.record-card__link {
+  margin: 0.35rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.record-card__bill-amount--credit {
+  color: var(--danger);
 }
 
 .record-card__package {
